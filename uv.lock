@@ -24,7 +24,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "duckdb", specifier = ">=1.5.5" },
-    { name = "geneticengine", editable = "../../../../Desktop/Thesis/GeneticEngine" },
+    { name = "geneticengine", editable = "../GeneticEngine" },
     { name = "numba", specifier = ">=0.66.0" },
     { name = "numpy", specifier = "==2.2.6" },
     { name = "polars", specifier = ">=1.43.2" },
@@ -201,7 +201,7 @@ wheels = [
 [[package]]
 name = "geneticengine"
 version = "0.8.7"
-source = { editable = "../../../../Desktop/Thesis/GeneticEngine" }
+source = { editable = "../GeneticEngine" }
 dependencies = [
     { name = "dill" },
     { name = "lark" },
