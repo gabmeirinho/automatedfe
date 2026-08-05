@@ -90,7 +90,8 @@ def test_sort_transactions_enriches_card_brand_and_document_type(tmp_path):
             SELECT * FROM VALUES
                 (20, TIMESTAMP '2024-01-02 00:00:00', 200),
                 (10, TIMESTAMP '2024-01-02 00:00:00', 100),
-                (10, TIMESTAMP '2024-01-01 00:00:00', NULL)
+                (10, TIMESTAMP '2024-01-01 00:00:00', NULL),
+                (30, TIMESTAMP '2024-01-03 00:00:00', 300)
             AS t(merchant_id, created_at, card_token_id)
         ) TO ? (FORMAT PARQUET)
         """,
@@ -135,7 +136,42 @@ def test_sort_transactions_enriches_card_brand_and_document_type(tmp_path):
     ).fetchall()
 
     assert rows == [
-        (10, None, None, "cnpj"),
+        (10, 0, "0", "cnpj"),
         (10, 100, "visa", "cnpj"),
         (20, 200, "mastercard", "cpf"),
+        (30, 300, "0", "0"),
     ]
+
+
+def test_sort_transactions_replaces_null_values_with_zero(tmp_path):
+    input_path = tmp_path / "input.parquet"
+    output_path = tmp_path / "output.parquet"
+
+    duckdb.sql(
+        """
+        COPY (
+            SELECT * FROM VALUES
+                (
+                    1,
+                    TIMESTAMP '2024-01-01 00:00:00',
+                    NULL::BIGINT,
+                    NULL::DOUBLE,
+                    NULL::VARCHAR
+                )
+            AS t(merchant_id, created_at, card_token_id, amount, status)
+        ) TO ? (FORMAT PARQUET)
+        """,
+        params=[str(input_path)],
+    )
+
+    sort_transactions(input_path, output_path)
+
+    rows = duckdb.sql(
+        """
+        SELECT merchant_id, card_token_id, amount, status
+        FROM read_parquet(?)
+        """,
+        params=[str(output_path)],
+    ).fetchall()
+
+    assert rows == [(1, 0, 0, "0")]

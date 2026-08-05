@@ -30,6 +30,50 @@ def _columns(connection: duckdb.DuckDBPyConnection, input_path: Path) -> set[str
     }
 
 
+def _schema(
+    connection: duckdb.DuckDBPyConnection, input_path: Path
+) -> list[tuple[str, str]]:
+    """Return the columns and DuckDB types in a parquet file."""
+
+    return [
+        (row[0], row[1])
+        for row in connection.execute(
+            "DESCRIBE SELECT * FROM read_parquet(?)", [str(input_path)]
+        ).fetchall()
+    ]
+
+
+def _zero_filled_expression(
+    column: str, column_type: str, *, table_alias: str = "t"
+) -> str:
+    """Build a type-preserving expression that replaces NULL with zero."""
+
+    quoted_column = f'{table_alias}."{column}"'
+    normalized_type = column_type.upper()
+
+    if normalized_type.startswith("VARCHAR") or normalized_type in {
+        "CHAR",
+        "TEXT",
+    }:
+        default = "'0'"
+    elif normalized_type.startswith("TIMESTAMP"):
+        default = (
+            "TIMESTAMPTZ '1970-01-01 00:00:00+00:00'"
+            if "WITH TIME ZONE" in normalized_type
+            else "TIMESTAMP '1970-01-01 00:00:00'"
+        )
+    elif normalized_type == "DATE":
+        default = "DATE '1970-01-01'"
+    elif normalized_type.startswith("TIME"):
+        default = "TIME '00:00:00'"
+    else:
+        # DuckDB can infer the correct zero type for numeric and boolean
+        # columns from the first argument to COALESCE.
+        default = "0"
+
+    return f"coalesce({quoted_column}, {default}) AS \"{column}\""
+
+
 def _validate_input_path(input_path: Path, label: str) -> Path:
     input_path = input_path.resolve()
     if not input_path.exists():
@@ -76,7 +120,8 @@ def sort_transactions(
         # necessary.
         connection.execute("SET memory_limit = ?", [DUCKDB_MEMORY_LIMIT])
 
-        columns = _columns(connection, input_path)
+        input_schema = _schema(connection, input_path)
+        columns = {column for column, _ in input_schema}
         required_columns = {"merchant_id", "created_at"}
         missing_columns = required_columns - columns
         if missing_columns:
@@ -114,18 +159,23 @@ def sort_transactions(
         # columns instead of producing duplicate names in the output schema.
         enrichment_columns = [output_column for _, _, output_column in relation_paths]
         excluded_columns = [column for column in enrichment_columns if column in columns]
-        transaction_projection = "t.*"
-        if excluded_columns:
-            quoted = ", ".join(f'"{column}"' for column in excluded_columns)
-            transaction_projection = f"t.* EXCLUDE ({quoted})"
-
-        select_columns = [transaction_projection]
+        select_columns = [
+            _zero_filled_expression(column, column_type)
+            for column, column_type in input_schema
+            if column not in excluded_columns
+        ]
         joins = []
         parameters = [str(input_path)]
         for relation_name, relation_path, output_column in relation_paths:
             alias = "ct" if relation_name == "card_tokens" else "m"
             join_key = "card_token_id" if alias == "ct" else "merchant_id"
-            select_columns.append(f"{alias}.{output_column} AS {output_column}")
+            relation_schema = _schema(connection, relation_path)
+            relation_type = dict(relation_schema)[output_column]
+            select_columns.append(
+                _zero_filled_expression(
+                    output_column, relation_type, table_alias=alias
+                )
+            )
             joins.append(
                 f"LEFT JOIN read_parquet(?) AS {alias} ON t.{join_key} = {alias}.id"
             )
