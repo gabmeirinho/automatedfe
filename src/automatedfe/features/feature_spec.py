@@ -53,6 +53,25 @@ class TotalHistoryWindow:
 
 Window = RowWindow | TimeWindow | TotalHistoryWindow
 
+MICROSECONDS_PER_HOUR = 3_600_000_000
+
+ROW_WINDOWS: tuple[RowWindow, ...] = tuple(
+    RowWindow(rows) for rows in (5, 10, 20, 50, 100, 200, 400, 800, 1600)
+)
+
+TIME_WINDOWS: tuple[TimeWindow, ...] = tuple(
+    TimeWindow(hours * MICROSECONDS_PER_HOUR)
+    for hours in (1, 6, 24, 24 * 7, 24 * 14, 24 * 30, 24 * 60, 24 * 90)
+)
+
+TOTAL_HISTORY_WINDOW = TotalHistoryWindow()
+
+WINDOW_CATALOG: tuple[Window, ...] = (
+    *ROW_WINDOWS,
+    *TIME_WINDOWS,
+    TOTAL_HISTORY_WINDOW,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class FeatureSpec:
@@ -85,8 +104,12 @@ __all__ = [
     "AMOUNT_COLUMN",
     "Aggregation",
     "FeatureSpec",
+    "ROW_WINDOWS",
     "RowWindow",
+    "TIME_WINDOWS",
+    "TOTAL_HISTORY_WINDOW",
     "TimeWindow",
     "TotalHistoryWindow",
+    "WINDOW_CATALOG",
     "Window",
 ]
