@@ -1,4 +1,4 @@
-"""Print null counts and percentages for every column in each dataset."""
+"""Print null counts and percentages for every transformed dataset."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import duckdb
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT_DIR = PROJECT_ROOT / "data" / "loan"
+DEFAULT_INPUT_DIR = PROJECT_ROOT / "data" / "loan" / "transformed"
 
 
 def quote_identifier(identifier: str) -> str:
@@ -29,7 +29,10 @@ def main() -> None:
         "--input-dir",
         type=Path,
         default=DEFAULT_INPUT_DIR,
-        help=f"Directory containing parquet datasets (default: {DEFAULT_INPUT_DIR})",
+        help=(
+            "Directory containing transformed parquet datasets "
+            f"(default: {DEFAULT_INPUT_DIR})"
+        ),
     )
     parser.add_argument(
         "--recursive",
