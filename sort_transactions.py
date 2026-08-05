@@ -16,6 +16,7 @@ import duckdb
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_INPUT = PROJECT_ROOT / "data" / "loan" / "transactions.parquet"
 DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "loan" / "transactions_sorted.parquet"
+DUCKDB_MEMORY_LIMIT = "16GB"
 
 
 def sort_transactions(input_path: Path, output_path: Path, *, force: bool = False) -> None:
@@ -40,6 +41,11 @@ def sort_transactions(input_path: Path, output_path: Path, *, force: bool = Fals
 
     connection = duckdb.connect()
     try:
+        # Keep the sort from consuming all available system memory. DuckDB
+        # will spill intermediate sort data to its temporary directory when
+        # necessary.
+        connection.execute("SET memory_limit = ?", [DUCKDB_MEMORY_LIMIT])
+
         # read_parquet's parameter keeps paths safe without interpolating them
         # into SQL.  The explicit column check gives a useful error if a
         # different parquet file is passed accidentally.
