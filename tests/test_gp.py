@@ -1,19 +1,22 @@
-import pytest
 import csv
 from typing import get_type_hints
 
+import numpy as np
+import pytest
 from geneticengine.evaluation.budget import EvaluationBudget
 
 from automatedfe.features import (
     AMOUNT_COLUMN,
+    WINDOW_CATALOG,
     Aggregation,
     Feature,
+    MaterializingGeneticProgramming,
     Mean,
-    WINDOW_CATALOG,
     WindowIndex,
     build_grammar,
     build_search_algorithm,
 )
+from automatedfe.features.feature_materialization import FeatureMaterializer
 
 
 def test_grammar_is_a_depth_one_mean_with_feature_and_window_parameters():
@@ -89,3 +92,52 @@ def test_search_requires_a_positive_population_size():
             EvaluationBudget(1),
             population_size=0,
         )
+
+
+def test_search_materializes_complete_population_before_fitness(tmp_path):
+    columns = {
+        "merchant_id": np.array([1, 1, 1, 2]),
+        "amount": np.array([10.0, 20.0, 30.0, 100.0]),
+        "created_at": np.array([1, 2, 3, 1], dtype=np.int64),
+    }
+    materializer = FeatureMaterializer(columns, output_dir=tmp_path)
+    events = []
+
+    original_materialize = materializer.materialize
+
+    def record_materialization(individual):
+        events.append(("materialize", str(individual)))
+        return original_materialize(individual)
+
+    materializer.materialize = record_materialization
+
+    algorithm = build_search_algorithm(
+        build_grammar(),
+        lambda individual: events.append(("fitness", str(individual))) or 0.0,
+        EvaluationBudget(10),
+        population_size=10,
+        seed=123,
+        materializer=materializer,
+    )
+
+    algorithm.search()
+
+    assert isinstance(algorithm, MaterializingGeneticProgramming)
+    assert [event for event, _ in events] == ["materialize"] * 10 + ["fitness"] * 10
+    assert list(tmp_path.glob("mean_amount_*.mmap"))
+
+
+def test_materialization_only_search_defaults_every_fitness_to_zero():
+    seen = []
+
+    algorithm = build_search_algorithm(
+        build_grammar(),
+        EvaluationBudget(4),
+        population_size=4,
+        materializer=lambda individual: seen.append(individual),
+    )
+    best = algorithm.search()
+
+    assert len(seen) == 4
+    assert all(isinstance(individual, Mean) for individual in seen)
+    assert best[0].get_fitness(algorithm.problem).fitness_components == [0.0]

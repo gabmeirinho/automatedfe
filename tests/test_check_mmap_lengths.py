@@ -1,9 +1,8 @@
 import subprocess
 import sys
 
-from automatedfe.materialization import materialize_transactions
+from automatedfe.transaction_materialization import materialize_transactions
 from tests.test_materialization import write_transformed_fixture
-
 
 SCRIPT = "scripts/check_mmap_lengths.py"
 

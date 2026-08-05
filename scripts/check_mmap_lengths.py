@@ -9,8 +9,8 @@ from pathlib import Path
 import duckdb
 import numpy as np
 
-from automatedfe.materialization import DEFAULT_MMAP_DIR, MANIFEST_FILENAME
 from automatedfe.sorting import DEFAULT_OUTPUT
+from automatedfe.transaction_materialization import DEFAULT_MMAP_DIR, MANIFEST_FILENAME
 
 
 def parquet_row_count(input_path: Path) -> int:

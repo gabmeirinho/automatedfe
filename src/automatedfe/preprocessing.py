@@ -14,10 +14,6 @@ from .encoding import (
     encode_transactions,
     fit_label_mapping,
 )
-from .materialization import (
-    DEFAULT_MMAP_DIR,
-    materialize_transactions,
-)
 from .sorting import (
     DEFAULT_CARD_TOKENS_INPUT,
     DEFAULT_DATASET_INPUT,
@@ -27,6 +23,10 @@ from .sorting import (
     DEFAULT_OUTPUT,
     sort_dataset,
     sort_transactions,
+)
+from .transaction_materialization import (
+    DEFAULT_MMAP_DIR,
+    materialize_transactions,
 )
 
 
