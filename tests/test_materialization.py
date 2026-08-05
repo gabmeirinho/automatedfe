@@ -3,9 +3,11 @@ import duckdb
 import numpy as np
 import pytest
 
+import automatedfe.features.feature_materialization as feature_materialization
 from automatedfe.features import (
     Aggregation,
     FeatureSpec,
+    FeatureMaterializer,
     RowWindow,
     materialize_feature,
 )
@@ -207,3 +209,49 @@ def test_materialize_feature_rejects_missing_required_mmap_column():
 
     with pytest.raises(ValueError, match="missing column.*amount"):
         materialize_feature(spec, {"merchant_id": np.array([1, 1])})
+
+
+def test_feature_materializer_reuses_a_feature_within_a_run(monkeypatch, tmp_path):
+    columns = {
+        "merchant_id": np.array([1, 1, 1, 2], dtype=np.int64),
+        "amount": np.array([10.0, 20.0, 30.0, 100.0]),
+        "created_at": np.array([1, 2, 3, 1], dtype=np.int64),
+    }
+    spec = FeatureSpec(Aggregation.MEAN, "amount", RowWindow(2))
+    calls = 0
+    original = feature_materialization.materialize_feature
+
+    def counted_materialize(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(feature_materialization, "materialize_feature", counted_materialize)
+    materializer = FeatureMaterializer(columns, output_dir=tmp_path / "features")
+
+    first = materializer.materialize(spec)
+    second = materializer.materialize(spec)
+
+    assert calls == 1
+    assert first is second
+    np.testing.assert_allclose(first, [np.nan, 10.0, 15.0, np.nan], equal_nan=True)
+
+
+def test_feature_materializer_deduplicates_a_population(monkeypatch):
+    columns = {
+        "merchant_id": np.array([1, 1], dtype=np.int64),
+        "amount": np.array([10.0, 20.0]),
+    }
+    spec = FeatureSpec(Aggregation.MEAN, "amount", RowWindow(2))
+    calls = 0
+    original = feature_materialization.materialize_feature
+
+    def counted_materialize(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(feature_materialization, "materialize_feature", counted_materialize)
+    FeatureMaterializer(columns).materialize_population([spec, spec])
+
+    assert calls == 1
