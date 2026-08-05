@@ -9,13 +9,13 @@ the last ``N`` rows, the last ``T`` microseconds, or the entire history up to
 
 Every kernel runs in linear time with a two-pointer scan: when ``i`` advances,
 the newly entered row is folded into running state and the row that left the
-window is subtracted back out (``sum``/``mean``/``std``) or popped off a
-monotonic deque (``max``). Nothing is recomputed from scratch per row.
+window is subtracted back out (``sum``/``mean``) or popped off a monotonic
+deque (``max``). Nothing is recomputed from scratch per row.
 
 Empty windows (the first row of a merchant, or no row within a time window)
-produce ``0`` for ``count`` and ``NaN`` for every other aggregation; ``std`` is
-``NaN`` unless the window holds at least two rows. Input values must be free of
-``NaN`` (the materialization pipeline zero-fills nulls before this step).
+produce ``0`` for ``count`` and ``NaN`` for every value aggregation. Input
+values must be free of ``NaN`` (the materialization pipeline zero-fills nulls
+before this step).
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ COUNT = 0
 SUM = 1
 MEAN = 2
 MAX = 3
-STD = 4
 
 ROW_WINDOW = 0
 TIME_WINDOW = 1
@@ -42,7 +41,6 @@ _AGGREGATIONS: dict[str, int] = {
     "sum": SUM,
     "mean": MEAN,
     "max": MAX,
-    "std": STD,
 }
 
 _WINDOW_MODES: dict[str, int] = {
@@ -52,96 +50,152 @@ _WINDOW_MODES: dict[str, int] = {
 }
 
 
+@numba.njit(inline="always")
+def _window_left(
+    merchant_id: np.ndarray,
+    created_at: np.ndarray,
+    i: int,
+    left: int,
+    window_mode: int,
+    window_span: int,
+) -> int:
+    """Return the first row included in the window for row *i*."""
+
+    if i > 0 and merchant_id[i] != merchant_id[i - 1]:
+        return i
+
+    if window_mode == ROW_WINDOW:
+        while i - left > window_span:
+            left += 1
+    elif window_mode == TIME_WINDOW:
+        while left < i and created_at[i] - created_at[left] > window_span:
+            left += 1
+    return left
+
+
 @numba.njit(cache=True, nogil=True)
-def _sliding_kernel(
+def _count_kernel(
+    merchant_id: np.ndarray,
+    created_at: np.ndarray,
+    result: np.ndarray,
+    window_mode: int,
+    window_span: int,
+) -> None:
+    """Write trailing transaction counts into *result*."""
+
+    left = 0
+    for i in range(merchant_id.shape[0]):
+        left = _window_left(
+            merchant_id, created_at, i, left, window_mode, window_span
+        )
+        result[i] = float(i - left)
+
+
+@numba.njit(cache=True, nogil=True)
+def _sum_kernel(
     merchant_id: np.ndarray,
     values: np.ndarray,
     created_at: np.ndarray,
-    out: np.ndarray,
+    result: np.ndarray,
     window_mode: int,
     window_span: int,
-    aggregation: int,
 ) -> None:
-    """Write the sliding-window aggregation for every row into *out*.
+    """Write trailing sums into *result*."""
 
-    *merchant_id* must be grouped (non-decreasing) and *created_at* must be
-    non-decreasing within each merchant group. *values* is only consulted for
-    aggregations other than ``count`` and may be an arbitrary array otherwise.
+    left = 0
+    total = 0.0
 
-    ``window_span`` is a row count for ``window_mode == ROW_WINDOW`` and a
-    microsecond span for ``window_mode == TIME_WINDOW``; it is ignored for
-    ``TOTAL_HISTORY``.
-    """
+    for i in range(merchant_id.shape[0]):
+        new_left = _window_left(
+            merchant_id, created_at, i, left, window_mode, window_span
+        )
+        new_merchant = i > 0 and merchant_id[i] != merchant_id[i - 1]
+        if new_merchant:
+            total = 0.0
+        else:
+            while left < new_left:
+                total -= values[left]
+                left += 1
+        left = new_left
+
+        count = i - left
+        result[i] = total if count > 0 else math.nan
+        total += values[i]
+
+
+@numba.njit(cache=True, nogil=True)
+def _mean_kernel(
+    merchant_id: np.ndarray,
+    values: np.ndarray,
+    created_at: np.ndarray,
+    result: np.ndarray,
+    window_mode: int,
+    window_span: int,
+) -> None:
+    """Write trailing means into *result*."""
+
+    left = 0
+    total = 0.0
+
+    for i in range(merchant_id.shape[0]):
+        new_left = _window_left(
+            merchant_id, created_at, i, left, window_mode, window_span
+        )
+        new_merchant = i > 0 and merchant_id[i] != merchant_id[i - 1]
+        if new_merchant:
+            total = 0.0
+        else:
+            while left < new_left:
+                total -= values[left]
+                left += 1
+        left = new_left
+
+        count = i - left
+        result[i] = total / count if count > 0 else math.nan
+        total += values[i]
+
+
+@numba.njit(cache=True, nogil=True)
+def _max_kernel(
+    merchant_id: np.ndarray,
+    values: np.ndarray,
+    created_at: np.ndarray,
+    result: np.ndarray,
+    window_mode: int,
+    window_span: int,
+) -> None:
+    """Write trailing maxima into *result* using a monotonic deque."""
 
     n = merchant_id.shape[0]
-
-    # Monotonic decreasing deque of row indices backing the window maximum.
     deque_indices = np.empty(n, dtype=np.int64)
     deque_head = 0
     deque_tail = 0
-
     left = 0
-    count = 0
-    total = 0.0
-    total_squares = 0.0
 
     for i in range(n):
-        if i > 0 and merchant_id[i] != merchant_id[i - 1]:
+        new_left = _window_left(
+            merchant_id, created_at, i, left, window_mode, window_span
+        )
+        new_merchant = i > 0 and merchant_id[i] != merchant_id[i - 1]
+        if new_merchant:
             left = i
-            count = 0
-            total = 0.0
-            total_squares = 0.0
             deque_head = 0
             deque_tail = 0
-
-        # Evict rows that no longer fall inside the window. The window for row
-        # i is [left, i): rows added in earlier iterations only.
-        if window_mode == ROW_WINDOW:
-            while i - left > window_span:
-                if aggregation != COUNT:
-                    total -= values[left]
-                    total_squares -= values[left] * values[left]
-                    if deque_head < deque_tail and deque_indices[deque_head] == left:
-                        deque_head += 1
-                count -= 1
-                left += 1
-        elif window_mode == TIME_WINDOW:
-            while left < i and created_at[i] - created_at[left] > window_span:
-                if aggregation != COUNT:
-                    total -= values[left]
-                    total_squares -= values[left] * values[left]
-                    if deque_head < deque_tail and deque_indices[deque_head] == left:
-                        deque_head += 1
-                count -= 1
-                left += 1
-
-        if aggregation == COUNT:
-            out[i] = float(count)
-        elif aggregation == SUM:
-            out[i] = total if count > 0 else math.nan
-        elif aggregation == MEAN:
-            out[i] = total / count if count > 0 else math.nan
-        elif aggregation == MAX:
-            out[i] = values[deque_indices[deque_head]] if count > 0 else math.nan
         else:
-            if count > 1:
-                mean = total / count
-                variance = (total_squares - count * mean * mean) / (count - 1)
-                out[i] = math.sqrt(variance if variance >= 0.0 else 0.0)
-            else:
-                out[i] = math.nan
+            while left < new_left:
+                if deque_head < deque_tail and deque_indices[deque_head] == left:
+                    deque_head += 1
+                left += 1
 
-        # Fold row i into the running state for the next window.
-        if aggregation == MAX:
-            value = values[i]
-            while deque_tail > deque_head and values[deque_indices[deque_tail - 1]] <= value:
-                deque_tail -= 1
-            deque_indices[deque_tail] = i
-            deque_tail += 1
-        elif aggregation != COUNT:
-            total += values[i]
-            total_squares += values[i] * values[i]
-        count += 1
+        left = new_left
+        count = i - left
+        result[i] = values[deque_indices[deque_head]] if count > 0 else math.nan
+
+        value = values[i]
+        while deque_tail > deque_head and values[deque_indices[deque_tail - 1]] <= value:
+            deque_tail -= 1
+        deque_indices[deque_tail] = i
+        deque_tail += 1
 
 
 def _resolve_aggregation(aggregation: str | Aggregation) -> int:
@@ -207,8 +261,8 @@ def sliding_window(
 ) -> np.ndarray:
     """Compute a sliding-window aggregation for every row.
 
-    ``aggregation`` is one of ``"count"``, ``"sum"``, ``"mean"``, ``"max"``,
-    ``"std"`` (or an :class:`~automatedfe.features.Aggregation`). ``count``
+    ``aggregation`` is one of ``"count"``, ``"sum"``, ``"mean"``, or
+    ``"max"`` (or an :class:`~automatedfe.features.Aggregation`). ``count``
     ignores *values*; the rest require it. *timestamps* (int64 microseconds)
     is only required for ``window_mode="time"``. *window_span* is a row count
     for ``"rows"`` and a microsecond span for ``"time"``; it is ignored for
@@ -231,9 +285,18 @@ def sliding_window(
             f"window_span must be positive for window_mode={window_mode!r}, got {window_span}"
         )
 
-    out = np.empty(merchant_id.shape[0], dtype=np.float64)
-    _sliding_kernel(merchant_id, values, timestamps, out, mode_code, window_span, aggregation_code)
-    return out
+    result = np.empty(merchant_id.shape[0], dtype=np.float64)
+    if aggregation_code == COUNT:
+        _count_kernel(merchant_id, timestamps, result, mode_code, window_span)
+    elif aggregation_code == SUM:
+        _sum_kernel(merchant_id, values, timestamps, result, mode_code, window_span)
+    elif aggregation_code == MEAN:
+        _mean_kernel(merchant_id, values, timestamps, result, mode_code, window_span)
+    elif aggregation_code == MAX:
+        _max_kernel(merchant_id, values, timestamps, result, mode_code, window_span)
+    else:
+        raise RuntimeError(f"Unsupported aggregation code: {aggregation_code}")
+    return result
 
 
 def aggregate(
@@ -276,7 +339,6 @@ __all__ = [
     "SUM",
     "MEAN",
     "MAX",
-    "STD",
     "ROW_WINDOW",
     "TIME_WINDOW",
     "TOTAL_HISTORY",

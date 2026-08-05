@@ -6,12 +6,12 @@ import argparse
 import logging
 from pathlib import Path
 
-from automatedfe.materialization import (
+from automatedfe.sorting import DEFAULT_OUTPUT
+from automatedfe.transaction_materialization import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_MMAP_DIR,
     materialize_transactions,
 )
-from automatedfe.sorting import DEFAULT_OUTPUT
 
 
 def main() -> None:

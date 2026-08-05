@@ -1,10 +1,15 @@
-from pathlib import Path
 
 import duckdb
 import numpy as np
 import pytest
 
-from automatedfe.materialization import (
+from automatedfe.features import (
+    Aggregation,
+    FeatureSpec,
+    RowWindow,
+    materialize_feature,
+)
+from automatedfe.transaction_materialization import (
     MANIFEST_FILENAME,
     MMAP_SUFFIX,
     column_dtype,
@@ -178,3 +183,27 @@ def test_materialize_rejects_parquet_without_numeric_columns(tmp_path):
 
     with pytest.raises(ValueError, match="no materializable"):
         materialize_transactions(path, tmp_path / "mmap")
+
+
+def test_materialize_feature_uses_transaction_mmaps_and_can_write_derived_mmap(tmp_path):
+    columns = {
+        "merchant_id": np.array([1, 1, 1, 2], dtype=np.int64),
+        "amount": np.array([10.0, 20.0, 30.0, 100.0]),
+        "created_at": np.array([1, 2, 3, 1], dtype=np.int64),
+    }
+    spec = FeatureSpec(Aggregation.MEAN, "amount", RowWindow(2))
+    output_path = tmp_path / "mean_amount_last_2_rows.mmap"
+
+    result = materialize_feature(spec, columns, output_path=output_path)
+
+    assert isinstance(result, np.memmap)
+    np.testing.assert_allclose(result, [np.nan, 10.0, 15.0, np.nan], equal_nan=True)
+    reopened = np.memmap(output_path, dtype=np.float64, mode="r", shape=(4,))
+    np.testing.assert_allclose(reopened, result, equal_nan=True)
+
+
+def test_materialize_feature_rejects_missing_required_mmap_column():
+    spec = FeatureSpec(Aggregation.MEAN, "amount", RowWindow(2))
+
+    with pytest.raises(ValueError, match="missing column.*amount"):
+        materialize_feature(spec, {"merchant_id": np.array([1, 1])})

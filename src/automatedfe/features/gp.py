@@ -1,87 +1,45 @@
-"""Minimal GP grammar and search configuration.
-
-The complete grammar is::
-
-    Mean(
-        feature: one of ["amount"],
-        window: 0 .. len(WINDOW_CATALOG) - 1,
-    )
-
-There are no arithmetic operations. GP searches for the window used to take
-the mean of the one available base feature, ``"amount"``.
-"""
+"""Search configuration for the feature-search genetic program."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
 from os import PathLike
-from typing import Annotated, Callable
 
-from geneticengine.algorithms.gp.gp import GeneticProgramming
-from geneticengine.evaluation.budget import SearchBudget
+from geneticengine.algorithms.gp.gp import (
+    GeneticProgramming,
+    GeneticProgrammingTwoPhase,
+)
+from geneticengine.evaluation.budget import TimeBudget
 from geneticengine.evaluation.recorder import CSVSearchRecorder
 from geneticengine.evaluation.tracker import ProgressTracker
-from geneticengine.grammar import extract_grammar
 from geneticengine.grammar.grammar import Grammar
-from geneticengine.grammar.metahandlers.ints import IntRange
-from geneticengine.grammar.metahandlers.vars import VarRange
 from geneticengine.problems import SingleObjectiveProblem
 from geneticengine.random.sources import NativeRandomSource
 from geneticengine.representations.tree.initializations import MaxDepthDecider
 from geneticengine.representations.tree.treebased import TreeBasedRepresentation
+from geneticengine.solutions.individual import PhenotypicIndividual
 
-from .feature_spec import (
-    AMOUNT_COLUMN,
-    Aggregation,
-    FeatureSpec,
-    WINDOW_CATALOG,
-    Window as FeatureWindow,
-)
+from .feature_materialization import FeatureMaterializer
+from .grammar import Feature, Mean, WindowIndex, build_grammar
 
-
-# Constrained terminal types keep Mean at tree depth 1. Adding another base
-# feature later only requires adding its column name to VarRange.
-Feature = Annotated[str, VarRange([AMOUNT_COLUMN])]
-WindowIndex = Annotated[int, IntRange(0, len(WINDOW_CATALOG) - 1)]
-
-
-@dataclass
-class Mean:
-    """Mean aggregation with exactly two parameters: feature and window."""
-
-    feature: Feature
-    window: WindowIndex
-
-    @property
-    def selected_window(self) -> FeatureWindow:
-        return WINDOW_CATALOG[self.window]
-
-    def to_feature_spec(self) -> FeatureSpec:
-        return FeatureSpec(Aggregation.MEAN, self.feature, self.selected_window)
-
-    def __str__(self) -> str:
-        return self.to_feature_spec().name
-
-
-def build_grammar() -> Grammar:
-    """Create the depth-1 ``Mean(feature, window)`` grammar."""
-
-    return extract_grammar([Mean], Mean)
+logger = logging.getLogger(__name__)
 
 
 def build_search_algorithm(
     grammar: Grammar,
-    fitness_function: Callable[[Mean], float],
-    budget: SearchBudget,
+    budget: TimeBudget,
     *,
     population_size: int = 20,
     seed: int = 42,
     csv_path: str | PathLike[str] | None = None,
+    mmap_dir: str | PathLike[str],
+    feature_output_dir: str | PathLike[str] | None = None,
 ) -> GeneticProgramming:
-    """Configure GP and optionally record every evaluation to a CSV file."""
+    """Configure the materializing GP search."""
 
     if population_size <= 0:
         raise ValueError("population_size must be positive")
+    materializer = FeatureMaterializer(mmap_dir, output_dir=feature_output_dir)
 
     random = NativeRandomSource(seed)
     representation = TreeBasedRepresentation(
@@ -89,7 +47,7 @@ def build_search_algorithm(
         MaxDepthDecider(random, grammar, max_depth=1),
     )
     problem = SingleObjectiveProblem(
-        fitness_function=fitness_function,
+        fitness_function=lambda _individual: 0.0,
         minimize=False,
     )
     tracker = None
@@ -108,18 +66,48 @@ def build_search_algorithm(
         )
         tracker = ProgressTracker(problem, recorders=[recorder])
 
-    return GeneticProgramming(
+    return MaterializingGeneticProgramming(
         problem=problem,
         budget=budget,
         representation=representation,
         population_size=population_size,
         random=random,
         tracker=tracker,
+        materializer=materializer,
     )
+
+
+class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
+    """Two-phase GP that materializes a complete generation before fitness."""
+
+    def __init__(
+        self,
+        *args: object,
+        materializer: FeatureMaterializer,
+        **kwargs: object,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.materializer = materializer
+
+    def precompute_population(
+        self,
+        individuals: list[PhenotypicIndividual],
+        generation: int,
+    ) -> None:
+        """Materialize all already-generated individuals in this generation."""
+
+        phenotypes = [individual.get_phenotype() for individual in individuals]
+        logger.info(
+            "Materializing generation %d: %d GP features",
+            generation,
+            len(phenotypes),
+        )
+        self.materializer.materialize_population(phenotypes)
 
 
 __all__ = [
     "Feature",
+    "MaterializingGeneticProgramming",
     "Mean",
     "WindowIndex",
     "build_grammar",
