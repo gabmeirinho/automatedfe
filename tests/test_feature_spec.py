@@ -111,3 +111,26 @@ def test_feature_spec_is_immutable():
     spec = FeatureSpec(Aggregation.COUNT, None, RowWindow(10))
     with pytest.raises(FrozenInstanceError):
         spec.window = TotalHistoryWindow()
+
+
+def test_row_window_name():
+    assert RowWindow(20).name == "last_20_rows"
+
+
+def test_time_window_name():
+    assert TimeWindow(3_600_000_000).name == "last_1h"
+    assert TimeWindow(21_600_000_000).name == "last_6h"
+    assert TimeWindow(86_400_000_000).name == "last_1d"
+    assert TimeWindow(604_800_000_000).name == "last_7d"
+    assert TimeWindow(7_776_000_000_000).name == "last_90d"
+
+
+def test_total_history_window_name():
+    assert TotalHistoryWindow().name == "all_history"
+
+
+def test_feature_names_are_deterministic():
+    assert FeatureSpec(Aggregation.COUNT, None, RowWindow(20)).name == "count_transactions_last_20_rows"
+    assert FeatureSpec(Aggregation.SUM, "amount", TimeWindow(604_800_000_000)).name == "sum_amount_last_7d"
+    assert FeatureSpec(Aggregation.STD, "amount", TimeWindow(7_776_000_000_000)).name == "std_amount_last_90d"
+    assert FeatureSpec(Aggregation.MAX, "amount", TotalHistoryWindow()).name == "max_amount_all_history"

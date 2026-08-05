@@ -13,6 +13,8 @@ from enum import Enum
 
 AMOUNT_COLUMN = "amount"
 
+MICROSECONDS_PER_HOUR = 3_600_000_000
+
 
 class Aggregation(str, Enum):
     COUNT = "count"
@@ -32,6 +34,10 @@ class RowWindow:
         if self.rows <= 0:
             raise ValueError(f"RowWindow.rows must be positive, got {self.rows}")
 
+    @property
+    def name(self) -> str:
+        return f"last_{self.rows}_rows"
+
 
 @dataclass(frozen=True, slots=True)
 class TimeWindow:
@@ -45,15 +51,27 @@ class TimeWindow:
                 f"TimeWindow.microseconds must be positive, got {self.microseconds}"
             )
 
+    @property
+    def name(self) -> str:
+        microseconds_per_hour = MICROSECONDS_PER_HOUR
+        microseconds_per_day = 24 * microseconds_per_hour
+        if self.microseconds % microseconds_per_day == 0:
+            return f"last_{self.microseconds // microseconds_per_day}d"
+        if self.microseconds % microseconds_per_hour == 0:
+            return f"last_{self.microseconds // microseconds_per_hour}h"
+        return f"last_{self.microseconds}us"
+
 
 @dataclass(frozen=True, slots=True)
 class TotalHistoryWindow:
     """A window covering the merchant's entire transaction history."""
 
+    @property
+    def name(self) -> str:
+        return "all_history"
+
 
 Window = RowWindow | TimeWindow | TotalHistoryWindow
-
-MICROSECONDS_PER_HOUR = 3_600_000_000
 
 ROW_WINDOWS: tuple[RowWindow, ...] = tuple(
     RowWindow(rows) for rows in (5, 10, 20, 50, 100, 200, 400, 800, 1600)
@@ -98,6 +116,11 @@ class FeatureSpec:
                 f"{self.aggregation.value} aggregation must use "
                 f"input_column={AMOUNT_COLUMN!r}, got {self.input_column!r}"
             )
+
+    @property
+    def name(self) -> str:
+        column = "transactions" if self.aggregation is Aggregation.COUNT else self.input_column
+        return f"{self.aggregation.value}_{column}_{self.window.name}"
 
 
 __all__ = [
