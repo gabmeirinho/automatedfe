@@ -25,6 +25,12 @@ from .kernels import (
     aggregate,
     sliding_window,
 )
+from .gp import (
+    Feature,
+    TransactionCount,
+    build_grammar,
+    build_search_algorithm,
+)
 
 __all__ = [
     "AMOUNT_COLUMN",
@@ -48,4 +54,8 @@ __all__ = [
     "TOTAL_HISTORY",
     "aggregate",
     "sliding_window",
+    "Feature",
+    "TransactionCount",
+    "build_grammar",
+    "build_search_algorithm",
 ]
