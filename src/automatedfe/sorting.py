@@ -93,7 +93,10 @@ def sort_transactions(
 
     When relation paths are supplied, ``card_tokens.card_brand`` and
     ``merchants.document_type`` are left-joined onto the transaction rows.
-    Leaving either path as ``None`` skips that enrichment.
+    If both inputs contain ``merchant_category_code``, null transaction codes
+    are filled from the matching merchant while non-null transaction codes are
+    preserved. The original code and its source are written to companion
+    columns. Leaving either path as ``None`` skips that enrichment.
     """
 
     input_path = _validate_input_path(input_path, "Input")
@@ -129,6 +132,7 @@ def sort_transactions(
             raise ValueError(f"Input parquet is missing required column(s): {missing}")
 
         relation_paths: list[tuple[str, Path, str]] = []
+        resolve_merchant_category_code = False
         if card_tokens_path is not None:
             card_tokens_path = _validate_input_path(card_tokens_path, "Card tokens")
             card_token_columns = _columns(connection, card_tokens_path)
@@ -153,14 +157,33 @@ def sort_transactions(
                 raise ValueError(
                     f"Merchant parquet is missing required column(s): {missing_names}"
                 )
+            if "merchant_category_code" in columns:
+                if "merchant_category_code" not in merchant_columns:
+                    raise ValueError(
+                        "Merchant parquet is missing the required column: "
+                        "merchant_category_code"
+                    )
+                resolve_merchant_category_code = True
             relation_paths.append(("merchants", merchants_path, "document_type"))
 
         # If an already-enriched input is passed in, replace the enrichment
         # columns instead of producing duplicate names in the output schema.
         enrichment_columns = [output_column for _, _, output_column in relation_paths]
-        excluded_columns = [column for column in enrichment_columns if column in columns]
+        excluded_columns = {column for column in enrichment_columns if column in columns}
+        if resolve_merchant_category_code:
+            excluded_columns.update(
+                {
+                    "merchant_category_code",
+                    "merchant_category_code_original",
+                    "merchant_category_code_source",
+                }
+            )
         select_columns = [
-            _zero_filled_expression(column, column_type)
+            (
+                f't."{column}" AS "{column}"'
+                if column == "merchant_category_code"
+                else _zero_filled_expression(column, column_type)
+            )
             for column, column_type in input_schema
             if column not in excluded_columns
         ]
@@ -180,6 +203,22 @@ def sort_transactions(
                 f"LEFT JOIN read_parquet(?) AS {alias} ON t.{join_key} = {alias}.id"
             )
             parameters.append(str(relation_path))
+
+        if resolve_merchant_category_code:
+            select_columns.extend(
+                [
+                    't."merchant_category_code" AS "merchant_category_code_original"',
+                    'coalesce(t."merchant_category_code", '
+                    'm."merchant_category_code") AS "merchant_category_code"',
+                    "CASE\n"
+                    '    WHEN t."merchant_category_code" IS NOT NULL '
+                    "THEN 'transactions'\n"
+                    '    WHEN m."merchant_category_code" IS NOT NULL '
+                    "THEN 'merchants'\n"
+                    "    ELSE 'missing'\n"
+                    'END AS "merchant_category_code_source"',
+                ]
+            )
 
         # DuckDB does not bind a parameter used as the COPY destination in the
         # same way as a read_parquet parameter. The resolved path is escaped
