@@ -1,0 +1,10 @@
+[project]
+name = "automatedfe"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "duckdb>=1.5.5",
+    "polars>=1.43.2",
+]
