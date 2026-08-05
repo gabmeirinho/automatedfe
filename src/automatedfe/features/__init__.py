@@ -22,7 +22,16 @@ from .feature_spec import (
     TotalHistoryWindow,
     Window,
 )
-from .grammar import Feature, Mean, WindowIndex, build_grammar
+from .grammar import (
+    AggregationFeature,
+    Count,
+    Feature,
+    Max,
+    Mean,
+    Sum,
+    WindowIndex,
+    build_grammar,
+)
 from .gp import (
     MaterializingGeneticProgramming,
     build_search_algorithm,
@@ -56,11 +65,15 @@ __all__ = [
     "TOTAL_HISTORY_WINDOW",
     "WINDOW_CATALOG",
     "Aggregation",
+    "AggregationFeature",
+    "Count",
     "Feature",
     "FeatureMaterializer",
     "FeatureSpec",
     "MaterializingGeneticProgramming",
+    "Max",
     "Mean",
+    "Sum",
     "RowWindow",
     "TimeWindow",
     "TotalHistoryWindow",
