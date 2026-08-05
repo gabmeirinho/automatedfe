@@ -13,6 +13,7 @@ from automatedfe.preprocessing import (
     DEFAULT_INPUT,
     DEFAULT_MAPPING_OUTPUT,
     DEFAULT_MERCHANTS_INPUT,
+    DEFAULT_MMAP_DIR,
     DEFAULT_OUTPUT,
     preprocess,
 )
@@ -63,9 +64,20 @@ def main() -> None:
         help=f"Label-mapping JSON file (default: {DEFAULT_MAPPING_OUTPUT})",
     )
     parser.add_argument(
+        "--mmap-dir",
+        type=Path,
+        default=DEFAULT_MMAP_DIR,
+        help=f"Directory for materialized mmap column files (default: {DEFAULT_MMAP_DIR})",
+    )
+    parser.add_argument(
+        "--no-materialize",
+        action="store_true",
+        help="Skip materializing the encoded transactions into mmap files",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
-        help="Replace existing sort outputs",
+        help="Replace existing sort and materialization outputs",
     )
     parser.add_argument(
         "--progress",
@@ -83,11 +95,15 @@ def main() -> None:
         dataset_path=args.dataset,
         dataset_output_path=args.dataset_output,
         mapping_path=args.mapping,
+        mmap_dir=args.mmap_dir,
+        materialize=not args.no_materialize,
         force=args.force,
         progress=args.progress,
     )
     print(f"Encoded transactions written to {args.transformed.resolve()}")
     print(f"Label mapping written to {args.mapping.resolve()}")
+    if not args.no_materialize:
+        print(f"Mmap columns written to {args.mmap_dir.resolve()}")
 
 
 if __name__ == "__main__":

@@ -79,6 +79,7 @@ def test_preprocess_runs_end_to_end(tmp_path):
     transformed_path = tmp_path / "transformed" / "transactions.parquet"
     dataset_output_path = tmp_path / "transformed" / "dataset.parquet"
     mapping_path = tmp_path / "transformed" / "label_mapping.json"
+    mmap_dir = tmp_path / "transformed" / "mmap"
 
     preprocess(
         paths["transactions"],
@@ -88,6 +89,7 @@ def test_preprocess_runs_end_to_end(tmp_path):
         dataset_path=paths["dataset"],
         dataset_output_path=dataset_output_path,
         mapping_path=mapping_path,
+        mmap_dir=mmap_dir,
     )
 
     assert read_rows(
@@ -108,6 +110,9 @@ def test_preprocess_runs_end_to_end(tmp_path):
     ]
 
     assert mapping_path.exists()
+    assert (mmap_dir / "manifest.json").exists()
+    assert (mmap_dir / "merchant_id.mmap").exists()
+    assert not (mmap_dir / "merchant_category_code.mmap").exists()
 
 
 def test_preprocess_requires_force_for_existing_sort_outputs(tmp_path):
@@ -137,6 +142,7 @@ def test_preprocess_force_replaces_existing_outputs(tmp_path):
     transformed_path = tmp_path / "transformed" / "transactions.parquet"
     dataset_output_path = tmp_path / "transformed" / "dataset.parquet"
     mapping_path = tmp_path / "transformed" / "label_mapping.json"
+    mmap_dir = tmp_path / "transformed" / "mmap"
 
     preprocess(
         paths["transactions"],
@@ -146,6 +152,7 @@ def test_preprocess_force_replaces_existing_outputs(tmp_path):
         dataset_path=paths["dataset"],
         dataset_output_path=dataset_output_path,
         mapping_path=mapping_path,
+        mmap_dir=mmap_dir,
     )
     preprocess(
         paths["transactions"],
