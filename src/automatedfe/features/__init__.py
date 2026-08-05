@@ -1,4 +1,4 @@
-"""Typed, immutable feature transformation definitions."""
+"""Typed, immutable feature transformation definitions and numba kernels."""
 
 from .feature_spec import (
     AMOUNT_COLUMN,
@@ -13,6 +13,18 @@ from .feature_spec import (
     WINDOW_CATALOG,
     Window,
 )
+from .kernels import (
+    MAX,
+    MEAN,
+    COUNT,
+    STD,
+    SUM,
+    ROW_WINDOW,
+    TIME_WINDOW,
+    TOTAL_HISTORY,
+    aggregate,
+    sliding_window,
+)
 
 __all__ = [
     "AMOUNT_COLUMN",
@@ -26,4 +38,14 @@ __all__ = [
     "TotalHistoryWindow",
     "WINDOW_CATALOG",
     "Window",
+    "MAX",
+    "MEAN",
+    "COUNT",
+    "STD",
+    "SUM",
+    "ROW_WINDOW",
+    "TIME_WINDOW",
+    "TOTAL_HISTORY",
+    "aggregate",
+    "sliding_window",
 ]
