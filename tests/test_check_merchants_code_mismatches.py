@@ -59,3 +59,26 @@ def test_checker_reports_value_and_null_mismatches(tmp_path):
         "2\tNULL\t5812\t1",
         "3\t5999\tNULL\t1",
     ]
+
+    summary_result = subprocess.run(
+        [
+            sys.executable,
+            SCRIPT,
+            "--transactions",
+            str(transactions_path),
+            "--merchants",
+            str(merchants_path),
+            "--summary",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert summary_result.stdout.splitlines() == [
+        "merchant_id\tmerchant_category_code\ttransaction_codes\t"
+        "mismatch_transaction_count\tnull_transaction_count",
+        "1\t5812\tNULL\t1\t1",
+        "2\t5812\tNULL\t1\t1",
+        "3\tNULL\t5999\t1\t0",
+    ]

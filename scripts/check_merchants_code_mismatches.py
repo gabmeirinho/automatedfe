@@ -38,6 +38,11 @@ def main() -> None:
         default=DEFAULT_MERCHANTS_INPUT,
         help=f"Merchants parquet file (default: {DEFAULT_MERCHANTS_INPUT})",
     )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Print one summarized row per mismatching merchant",
+    )
     args = parser.parse_args()
 
     for path, label in (
@@ -63,28 +68,64 @@ def main() -> None:
             missing = ", ".join(sorted(missing_columns))
             parser.error(f"Merchants parquet is missing required column(s): {missing}")
 
-        rows = connection.execute(
-            """
-            WITH transaction_codes AS (
+        if args.summary:
+            query = """
+                WITH transaction_codes AS (
+                    SELECT
+                        merchant_id,
+                        merchant_category_code,
+                        count(*) AS transaction_count
+                    FROM read_parquet(?)
+                    WHERE merchant_id IS NOT NULL
+                    GROUP BY merchant_id, merchant_category_code
+                )
                 SELECT
-                    merchant_id,
-                    merchant_category_code,
-                    count(*) AS transaction_count
-                FROM read_parquet(?)
-                WHERE merchant_id IS NOT NULL
-                GROUP BY merchant_id, merchant_category_code
-            )
-            SELECT
-                t.merchant_id,
-                t.merchant_category_code AS transaction_merchant_category_code,
-                m.merchant_category_code AS merchant_merchant_category_code,
-                t.transaction_count
-            FROM transaction_codes AS t
-            INNER JOIN read_parquet(?) AS m ON t.merchant_id = m.id
-            -- IS DISTINCT FROM deliberately treats NULL versus a value as a mismatch.
-            WHERE t.merchant_category_code IS DISTINCT FROM m.merchant_category_code
-            ORDER BY t.merchant_id, t.merchant_category_code NULLS FIRST
-            """,
+                    t.merchant_id,
+                    m.merchant_category_code AS merchant_category_code,
+                    string_agg(
+                        COALESCE(t.merchant_category_code, 'NULL'),
+                        ', ' ORDER BY t.merchant_category_code NULLS FIRST
+                    ) AS transaction_codes,
+                    sum(t.transaction_count) AS mismatch_transaction_count,
+                    sum(
+                        CASE
+                            WHEN t.merchant_category_code IS NULL
+                            THEN t.transaction_count
+                            ELSE 0
+                        END
+                    ) AS null_transaction_count
+                FROM transaction_codes AS t
+                INNER JOIN read_parquet(?) AS m ON t.merchant_id = m.id
+                -- IS DISTINCT FROM deliberately treats NULL versus a value as a mismatch.
+                WHERE t.merchant_category_code IS DISTINCT FROM m.merchant_category_code
+                GROUP BY t.merchant_id, m.merchant_category_code
+                ORDER BY t.merchant_id
+                """
+        else:
+            query = """
+                WITH transaction_codes AS (
+                    SELECT
+                        merchant_id,
+                        merchant_category_code,
+                        count(*) AS transaction_count
+                    FROM read_parquet(?)
+                    WHERE merchant_id IS NOT NULL
+                    GROUP BY merchant_id, merchant_category_code
+                )
+                SELECT
+                    t.merchant_id,
+                    t.merchant_category_code AS transaction_merchant_category_code,
+                    m.merchant_category_code AS merchant_merchant_category_code,
+                    t.transaction_count
+                FROM transaction_codes AS t
+                INNER JOIN read_parquet(?) AS m ON t.merchant_id = m.id
+                -- IS DISTINCT FROM deliberately treats NULL versus a value as a mismatch.
+                WHERE t.merchant_category_code IS DISTINCT FROM m.merchant_category_code
+                ORDER BY t.merchant_id, t.merchant_category_code NULLS FIRST
+                """
+
+        rows = connection.execute(
+            query,
             [str(args.transactions.resolve()), str(args.merchants.resolve())],
         ).fetchall()
     finally:
@@ -92,6 +133,25 @@ def main() -> None:
 
     if not rows:
         print("No merchant category code mismatches found.")
+        return
+
+    if args.summary:
+        print(
+            "merchant_id\tmerchant_category_code\ttransaction_codes\t"
+            "mismatch_transaction_count\tnull_transaction_count"
+        )
+        for (
+            merchant_id,
+            merchant_code,
+            transaction_codes,
+            mismatch_count,
+            null_count,
+        ) in rows:
+            merchant_code = "NULL" if merchant_code is None else str(merchant_code)
+            print(
+                f"{merchant_id}\t{merchant_code}\t{transaction_codes}\t"
+                f"{mismatch_count}\t{null_count}"
+            )
         return
 
     print(
