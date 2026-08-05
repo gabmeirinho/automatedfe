@@ -2,11 +2,13 @@
 
 The complete grammar is::
 
-    Feature -> TransactionCount(window_i)
-    window_i -> an integer from 0 to len(WINDOW_CATALOG) - 1
+    Mean(
+        feature: one of ["amount"],
+        window: 0 .. len(WINDOW_CATALOG) - 1,
+    )
 
-There are no arithmetic operations.  GP only searches for the window of one
-transaction-count feature.
+There are no arithmetic operations. GP searches for the window used to take
+the mean of the one available base feature, ``"amount"``.
 """
 
 from __future__ import annotations
@@ -17,51 +19,56 @@ from typing import Annotated, Callable
 from geneticengine.algorithms.gp.gp import GeneticProgramming
 from geneticengine.evaluation.budget import SearchBudget
 from geneticengine.grammar import extract_grammar
-from geneticengine.grammar.decorators import abstract
 from geneticengine.grammar.grammar import Grammar
 from geneticengine.grammar.metahandlers.ints import IntRange
+from geneticengine.grammar.metahandlers.vars import VarRange
 from geneticengine.problems import SingleObjectiveProblem
 from geneticengine.random.sources import NativeRandomSource
 from geneticengine.representations.tree.initializations import MaxDepthDecider
 from geneticengine.representations.tree.treebased import TreeBasedRepresentation
 
-from .feature_spec import Aggregation, FeatureSpec, WINDOW_CATALOG, Window
+from .feature_spec import (
+    AMOUNT_COLUMN,
+    Aggregation,
+    FeatureSpec,
+    WINDOW_CATALOG,
+    Window as FeatureWindow,
+)
 
 
-@abstract
-class Feature:
-    """The grammar's abstract root (a GeneticEngine non-terminal)."""
-
-    def to_feature_spec(self) -> FeatureSpec:
-        raise NotImplementedError
+# Constrained terminal types keep Mean at tree depth 1. Adding another base
+# feature later only requires adding its column name to VarRange.
+Feature = Annotated[str, VarRange([AMOUNT_COLUMN])]
+WindowIndex = Annotated[int, IntRange(0, len(WINDOW_CATALOG) - 1)]
 
 
 @dataclass
-class TransactionCount(Feature):
-    """The grammar's only feature production."""
+class Mean:
+    """Mean aggregation with exactly two parameters: feature and window."""
 
-    window_i: Annotated[int, IntRange(0, len(WINDOW_CATALOG) - 1)]
+    feature: Feature
+    window: WindowIndex
 
     @property
-    def window(self) -> Window:
-        return WINDOW_CATALOG[self.window_i]
+    def selected_window(self) -> FeatureWindow:
+        return WINDOW_CATALOG[self.window]
 
     def to_feature_spec(self) -> FeatureSpec:
-        return FeatureSpec(Aggregation.COUNT, None, self.window)
+        return FeatureSpec(Aggregation.MEAN, self.feature, self.selected_window)
 
     def __str__(self) -> str:
         return self.to_feature_spec().name
 
 
 def build_grammar() -> Grammar:
-    """Create ``Feature -> TransactionCount(window_i)``."""
+    """Create the depth-1 ``Mean(feature, window)`` grammar."""
 
-    return extract_grammar([TransactionCount], Feature)
+    return extract_grammar([Mean], Mean)
 
 
 def build_search_algorithm(
     grammar: Grammar,
-    fitness_function: Callable[[Feature], float],
+    fitness_function: Callable[[Mean], float],
     budget: SearchBudget,
     *,
     population_size: int = 20,
@@ -92,7 +99,8 @@ def build_search_algorithm(
 
 __all__ = [
     "Feature",
-    "TransactionCount",
+    "Mean",
+    "WindowIndex",
     "build_grammar",
     "build_search_algorithm",
 ]

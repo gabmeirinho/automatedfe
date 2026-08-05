@@ -27,7 +27,8 @@ from .kernels import (
 )
 from .gp import (
     Feature,
-    TransactionCount,
+    Mean,
+    WindowIndex,
     build_grammar,
     build_search_algorithm,
 )
@@ -55,7 +56,8 @@ __all__ = [
     "aggregate",
     "sliding_window",
     "Feature",
-    "TransactionCount",
+    "Mean",
+    "WindowIndex",
     "build_grammar",
     "build_search_algorithm",
 ]
