@@ -8,7 +8,6 @@ from automatedfe.features import (
     COUNT,
     MAX,
     MEAN,
-    STD,
     SUM,
     TIME_WINDOW,
     TOTAL_HISTORY,
@@ -82,7 +81,7 @@ def reference(merchant_id, values, timestamps, aggregation, window_mode, window_
     return np.array(out)
 
 
-@pytest.mark.parametrize("aggregation", ["count", "sum", "mean", "max", "std"])
+@pytest.mark.parametrize("aggregation", ["count", "sum", "mean", "max"])
 @pytest.mark.parametrize("window_span", [1, 2, 4, 1000])
 def test_row_windows_match_reference(aggregation, window_span):
     actual = sliding_window(
@@ -92,7 +91,7 @@ def test_row_windows_match_reference(aggregation, window_span):
     np.testing.assert_allclose(actual, expected, equal_nan=True)
 
 
-@pytest.mark.parametrize("aggregation", ["count", "sum", "mean", "max", "std"])
+@pytest.mark.parametrize("aggregation", ["count", "sum", "mean", "max"])
 @pytest.mark.parametrize("window_span", [1, 1000, 9000])
 def test_time_windows_match_reference(aggregation, window_span):
     actual = sliding_window(
@@ -102,7 +101,7 @@ def test_time_windows_match_reference(aggregation, window_span):
     np.testing.assert_allclose(actual, expected, equal_nan=True)
 
 
-@pytest.mark.parametrize("aggregation", ["count", "sum", "mean", "max", "std"])
+@pytest.mark.parametrize("aggregation", ["count", "sum", "mean", "max"])
 def test_total_history_matches_reference(aggregation):
     actual = sliding_window(
         MERCHANT_IDS, AMOUNTS, None, aggregation=aggregation, window_mode="total"
@@ -188,12 +187,11 @@ def test_aggregation_constants_match_strings():
     assert SUM == 1
     assert MEAN == 2
     assert MAX == 3
-    assert STD == 4
     assert TIME_WINDOW == 1
     assert TOTAL_HISTORY == 2
 
 
-@pytest.mark.parametrize("aggregation", ["sum", "mean", "max", "std"])
+@pytest.mark.parametrize("aggregation", ["sum", "mean", "max"])
 def test_value_aggregations_require_values(aggregation):
     with pytest.raises(ValueError, match="requires the 'values' array"):
         sliding_window(
@@ -208,7 +206,7 @@ def test_time_windows_require_timestamps():
         )
 
 
-@pytest.mark.parametrize("aggregation", ["median", "mode"])
+@pytest.mark.parametrize("aggregation", ["median", "mode", "std"])
 def test_unknown_aggregation_rejected(aggregation):
     with pytest.raises(ValueError, match="Unknown aggregation"):
         sliding_window(MERCHANT_IDS, None, None, aggregation=aggregation)
