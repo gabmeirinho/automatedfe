@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from pathlib import Path
 
 import duckdb
+
+logger = logging.getLogger(__name__)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -103,6 +107,10 @@ def sort_transactions(
     input_path = _validate_input_path(input_path, "Input")
     output_path = output_path.resolve()
 
+    logger.info("Sorting transactions: %s", input_path)
+    logger.info("Writing sorted transactions to: %s", output_path)
+    logger.info("Using a %s DuckDB memory limit", DUCKDB_MEMORY_LIMIT)
+
     if not input_path.exists():
         raise FileNotFoundError(f"Input parquet file does not exist: {input_path}")
     if input_path == output_path:
@@ -114,9 +122,12 @@ def sort_transactions(
         raise FileExistsError(
             f"Output already exists: {output_path}. Re-run with --force to replace it."
         )
+    if output_path.exists() and force:
+        logger.info("Replacing existing output: %s", output_path)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    start = time.perf_counter()
     connection = duckdb.connect()
     try:
         # Keep the sort from consuming all available system memory. DuckDB
@@ -131,11 +142,16 @@ def sort_transactions(
         if missing_columns:
             missing = ", ".join(sorted(missing_columns))
             raise ValueError(f"Input parquet is missing required column(s): {missing}")
+        logger.info(
+            "Validated input schema: %d columns, sorted by merchant_id, created_at",
+            len(columns),
+        )
 
         relation_paths: list[tuple[str, Path, str]] = []
         resolve_merchant_category_code = False
         if card_tokens_path is not None:
             card_tokens_path = _validate_input_path(card_tokens_path, "Card tokens")
+            logger.info("Enriching with card_brand from: %s", card_tokens_path)
             card_token_columns = _columns(connection, card_tokens_path)
             missing = {"id", "card_brand"} - card_token_columns
             if missing:
@@ -151,6 +167,7 @@ def sort_transactions(
 
         if merchants_path is not None:
             merchants_path = _validate_input_path(merchants_path, "Merchants")
+            logger.info("Enriching with document_type from: %s", merchants_path)
             merchant_columns = _columns(connection, merchants_path)
             missing = {"id", "document_type"} - merchant_columns
             if missing:
@@ -165,6 +182,9 @@ def sort_transactions(
                         "merchant_category_code"
                     )
                 resolve_merchant_category_code = True
+                logger.info(
+                    "Resolving null merchant_category_code values from merchants"
+                )
             relation_paths.append(("merchants", merchants_path, "document_type"))
 
         # If an already-enriched input is passed in, replace the enrichment
@@ -205,6 +225,10 @@ def sort_transactions(
         # same way as a read_parquet parameter. The resolved path is escaped
         # before it is inserted into the COPY statement.
         output_sql_path = str(output_path).replace("'", "''")
+        logger.info(
+            "Reading, enriching, and sorting %d columns by merchant_id, created_at",
+            len(select_columns),
+        )
         connection.execute(
             f"""
             COPY (
@@ -221,12 +245,23 @@ def sort_transactions(
     finally:
         connection.close()
 
+    elapsed = time.perf_counter() - start
+    logger.info(
+        "Sorted transactions written to %s (%.1fs)",
+        output_path,
+        elapsed,
+    )
+
 
 def sort_dataset(input_path: Path, output_path: Path, *, force: bool = False) -> None:
     """Sort *input_path* by ``event_timestamp`` into *output_path*."""
 
     input_path = input_path.resolve()
     output_path = output_path.resolve()
+
+    logger.info("Sorting dataset: %s", input_path)
+    logger.info("Writing sorted dataset to: %s", output_path)
+    logger.info("Using a %s DuckDB memory limit", DUCKDB_MEMORY_LIMIT)
 
     if not input_path.exists():
         raise FileNotFoundError(f"Input parquet file does not exist: {input_path}")
@@ -236,9 +271,12 @@ def sort_dataset(input_path: Path, output_path: Path, *, force: bool = False) ->
         raise FileExistsError(
             f"Output already exists: {output_path}. Re-run with --force to replace it."
         )
+    if output_path.exists() and force:
+        logger.info("Replacing existing output: %s", output_path)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    start = time.perf_counter()
     connection = duckdb.connect()
     try:
         columns = {
@@ -251,8 +289,13 @@ def sort_dataset(input_path: Path, output_path: Path, *, force: bool = False) ->
             raise ValueError(
                 "Input parquet is missing the required column: event_timestamp"
             )
+        logger.info(
+            "Validated input schema: %d columns, sorted by event_timestamp",
+            len(columns),
+        )
 
         output_sql_path = str(output_path).replace("'", "''")
+        logger.info("Sorting %d columns by event_timestamp", len(columns))
         connection.execute(
             f"""
             COPY (
@@ -267,3 +310,6 @@ def sort_dataset(input_path: Path, output_path: Path, *, force: bool = False) ->
         )
     finally:
         connection.close()
+
+    elapsed = time.perf_counter() - start
+    logger.info("Sorted dataset written to %s (%.1fs)", output_path, elapsed)

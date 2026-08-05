@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 from automatedfe.preprocessing import (
@@ -68,6 +69,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     preprocess(
         args.transactions,
         args.transformed,
