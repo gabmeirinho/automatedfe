@@ -76,3 +76,141 @@ def test_sort_transactions_rejects_missing_required_column(tmp_path):
 
     with pytest.raises(ValueError, match="created_at"):
         sort_transactions(input_path, output_path)
+
+
+def test_sort_transactions_enriches_card_brand_and_document_type(tmp_path):
+    input_path = tmp_path / "input.parquet"
+    card_tokens_path = tmp_path / "card_tokens.parquet"
+    merchants_path = tmp_path / "merchants.parquet"
+    output_path = tmp_path / "output.parquet"
+
+    duckdb.sql(
+        """
+        COPY (
+            SELECT * FROM VALUES
+                (20, TIMESTAMP '2024-01-02 00:00:00', 200, '5812'),
+                (10, TIMESTAMP '2024-01-02 00:00:00', 100, '5999'),
+                (10, TIMESTAMP '2024-01-01 00:00:00', NULL, NULL),
+                (30, TIMESTAMP '2024-01-03 00:00:00', 300, NULL)
+            AS t(merchant_id, created_at, card_token_id, merchant_category_code)
+        ) TO ? (FORMAT PARQUET)
+        """,
+        params=[str(input_path)],
+    )
+    duckdb.sql(
+        """
+        COPY (
+            SELECT * FROM VALUES
+                (100, 'visa'),
+                (200, 'mastercard')
+            AS t(id, card_brand)
+        ) TO ? (FORMAT PARQUET)
+        """,
+        params=[str(card_tokens_path)],
+    )
+    duckdb.sql(
+        """
+        COPY (
+            SELECT * FROM VALUES
+                (10, 'cnpj', '5812'),
+                (20, 'cpf', '5812')
+            AS t(id, document_type, merchant_category_code)
+        ) TO ? (FORMAT PARQUET)
+        """,
+        params=[str(merchants_path)],
+    )
+
+    sort_transactions(
+        input_path,
+        output_path,
+        card_tokens_path=card_tokens_path,
+        merchants_path=merchants_path,
+    )
+
+    columns = [
+        row[0]
+        for row in duckdb.sql(
+            "DESCRIBE SELECT * FROM read_parquet(?)",
+            params=[str(output_path)],
+        ).fetchall()
+    ]
+    assert "merchant_category_code" in columns
+
+    rows = duckdb.sql(
+        """
+        SELECT
+            merchant_id,
+            card_token_id,
+            card_brand,
+            document_type,
+            merchant_category_code
+        FROM read_parquet(?)
+        """,
+        params=[str(output_path)],
+    ).fetchall()
+
+    assert rows == [
+        (10, 0, "0", "cnpj", "5812"),
+        (10, 100, "visa", "cnpj", "5999"),
+        (20, 200, "mastercard", "cpf", "5812"),
+        (30, 300, "0", "0", "0"),
+    ]
+
+
+def test_sort_transactions_replaces_null_values_with_zero(tmp_path):
+    input_path = tmp_path / "input.parquet"
+    output_path = tmp_path / "output.parquet"
+
+    duckdb.sql(
+        """
+        COPY (
+            SELECT * FROM VALUES
+                (
+                    1,
+                    TIMESTAMP '2024-01-01 00:00:00',
+                    NULL::BIGINT,
+                    NULL::DOUBLE,
+                    NULL::VARCHAR
+                )
+            AS t(merchant_id, created_at, card_token_id, amount, status)
+        ) TO ? (FORMAT PARQUET)
+        """,
+        params=[str(input_path)],
+    )
+
+    sort_transactions(input_path, output_path)
+
+    rows = duckdb.sql(
+        """
+        SELECT merchant_id, card_token_id, amount, status
+        FROM read_parquet(?)
+        """,
+        params=[str(output_path)],
+    ).fetchall()
+
+    assert rows == [(1, 0, 0, "0")]
+
+
+def test_sort_transactions_replaces_null_mcc_without_merchants_source(tmp_path):
+    input_path = tmp_path / "input.parquet"
+    output_path = tmp_path / "output.parquet"
+
+    duckdb.sql(
+        """
+        COPY (
+            SELECT * FROM VALUES
+                (1, TIMESTAMP '2024-01-01 00:00:00', NULL::VARCHAR)
+            AS t(merchant_id, created_at, merchant_category_code)
+        ) TO ? (FORMAT PARQUET)
+        """,
+        params=[str(input_path)],
+    )
+
+    sort_transactions(input_path, output_path)
+
+    rows = duckdb.sql(
+        "SELECT merchant_category_code FROM read_parquet(?)",
+        params=[str(output_path)],
+    ).fetchall()
+
+    assert rows == [("0",)]

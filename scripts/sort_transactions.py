@@ -6,7 +6,9 @@ import argparse
 from pathlib import Path
 
 from automatedfe.sorting import (
+    DEFAULT_CARD_TOKENS_INPUT,
     DEFAULT_INPUT,
+    DEFAULT_MERCHANTS_INPUT,
     DEFAULT_OUTPUT,
     sort_transactions,
 )
@@ -27,12 +29,30 @@ def main() -> None:
         help=f"Sorted parquet file (default: {DEFAULT_OUTPUT})",
     )
     parser.add_argument(
+        "--card-tokens",
+        type=Path,
+        default=DEFAULT_CARD_TOKENS_INPUT,
+        help=f"Card-token parquet file (default: {DEFAULT_CARD_TOKENS_INPUT})",
+    )
+    parser.add_argument(
+        "--merchants",
+        type=Path,
+        default=DEFAULT_MERCHANTS_INPUT,
+        help=f"Merchant parquet file (default: {DEFAULT_MERCHANTS_INPUT})",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Replace the output file if it already exists",
     )
     args = parser.parse_args()
-    sort_transactions(args.input, args.output, force=args.force)
+    sort_transactions(
+        args.input,
+        args.output,
+        card_tokens_path=args.card_tokens,
+        merchants_path=args.merchants,
+        force=args.force,
+    )
     print(f"Sorted transactions written to {args.output.resolve()}")
 
 
