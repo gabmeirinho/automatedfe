@@ -5,9 +5,10 @@ module is the bridge used before GP evaluation: it takes an individual (or a
 ``FeatureSpec``), resolves the source columns from those mmaps, and computes
 the individual's aggregation with the compiled sliding-window kernel.
 
-Derived features are deliberately not cached. If an output directory is
-configured, the selected feature is written to its own mmap file on every
-call, so repeated evaluations have simple, predictable behaviour.
+Derived features are cached by :class:`FeatureMaterializer` for the lifetime
+of a materialization run. If an output directory is configured, the first
+materialization is also written to its own mmap file; later requests for the
+same feature reuse the cached array instead of recomputing or overwriting it.
 """
 
 from __future__ import annotations
@@ -93,8 +94,8 @@ def materialize_feature(
     matching :func:`~automatedfe.features.aggregate`.
 
     When *output_path* is supplied, the result is copied into a ``float64``
-    memory-mapped file. Existing files are overwritten; this function
-    intentionally does not implement feature caching.
+    memory-mapped file. Existing files are overwritten. Caching is provided by
+    :class:`FeatureMaterializer`, which owns the cache for a search run.
     """
 
     if not isinstance(columns, Mapping):
@@ -127,8 +128,9 @@ class FeatureMaterializer:
 
     *columns* may be a mapping of arrays or the directory containing the
     transaction mmap manifest. Source columns are opened once when this
-    object is constructed. No derived aggregation is retained between calls.
-    Set *output_dir* to persist each derived feature as
+    object is constructed. Derived aggregations are retained in a per-run
+    cache, keyed by their :class:`FeatureSpec`. Set *output_dir* to persist
+    each derived feature as
     ``<feature-name>.mmap``; otherwise the result is an in-memory NumPy array.
     """
 
@@ -143,11 +145,16 @@ class FeatureMaterializer:
         else:
             self.columns = load_mmapped_columns(Path(columns))
         self.output_dir = None if output_dir is None else Path(output_dir).resolve()
+        self._cache: dict[FeatureSpec, np.ndarray] = {}
 
     def materialize(self, individual: FeatureSpec | Any) -> np.ndarray:
-        """Materialize one GP individual, with no derived-feature cache."""
+        """Materialize one GP individual, reusing a feature seen in this run."""
 
         spec = _feature_spec(individual)
+        if spec in self._cache:
+            logger.info("Reusing cached feature: %s", spec.name)
+            return self._cache[spec]
+
         output_path = None
         if self.output_dir is not None:
             output_path = self.output_dir / f"{spec.name}{FEATURE_MMAP_SUFFIX}"
@@ -155,11 +162,13 @@ class FeatureMaterializer:
             logger.info("Materializing feature: %s", spec.name)
         else:
             logger.info("Materializing feature: %s -> %s", spec.name, output_path)
-        return materialize_feature(
+        result = materialize_feature(
             spec,
             self.columns,
             output_path=output_path,
         )
+        self._cache[spec] = result
+        return result
 
     __call__ = materialize
 
