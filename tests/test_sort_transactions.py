@@ -146,7 +146,7 @@ def test_sort_transactions_enriches_card_brand_and_document_type(tmp_path):
         (10, 0, "0", "cnpj", None, "5812", "merchants"),
         (10, 100, "visa", "cnpj", "5999", "5999", "transactions"),
         (20, 200, "mastercard", "cpf", "5812", "5812", "transactions"),
-        (30, 300, "0", "0", None, None, "missing"),
+        (30, 300, "0", "0", None, "0", "missing"),
     ]
 
 
@@ -184,7 +184,7 @@ def test_sort_transactions_replaces_null_values_with_zero(tmp_path):
     assert rows == [(1, 0, 0, "0")]
 
 
-def test_sort_transactions_preserves_null_mcc_without_merchants_source(tmp_path):
+def test_sort_transactions_replaces_null_mcc_without_merchants_source(tmp_path):
     input_path = tmp_path / "input.parquet"
     output_path = tmp_path / "output.parquet"
 
@@ -206,4 +206,4 @@ def test_sort_transactions_preserves_null_mcc_without_merchants_source(tmp_path)
         params=[str(output_path)],
     ).fetchall()
 
-    assert rows == [(None,)]
+    assert rows == [("0",)]

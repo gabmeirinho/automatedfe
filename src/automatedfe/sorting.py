@@ -95,8 +95,9 @@ def sort_transactions(
     ``merchants.document_type`` are left-joined onto the transaction rows.
     If both inputs contain ``merchant_category_code``, null transaction codes
     are filled from the matching merchant while non-null transaction codes are
-    preserved. The original code and its source are written to companion
-    columns. Leaving either path as ``None`` skips that enrichment.
+    preserved. If neither source has a code, ``"0"`` is used as the resolved
+    value. The original code and its source are written to companion columns.
+    Leaving either path as ``None`` skips that enrichment.
     """
 
     input_path = _validate_input_path(input_path, "Input")
@@ -179,11 +180,7 @@ def sort_transactions(
                 }
             )
         select_columns = [
-            (
-                f't."{column}" AS "{column}"'
-                if column == "merchant_category_code"
-                else _zero_filled_expression(column, column_type)
-            )
+            _zero_filled_expression(column, column_type)
             for column, column_type in input_schema
             if column not in excluded_columns
         ]
@@ -209,7 +206,7 @@ def sort_transactions(
                 [
                     't."merchant_category_code" AS "merchant_category_code_original"',
                     'coalesce(t."merchant_category_code", '
-                    'm."merchant_category_code") AS "merchant_category_code"',
+                    'm."merchant_category_code", \'0\') AS "merchant_category_code"',
                     "CASE\n"
                     '    WHEN t."merchant_category_code" IS NOT NULL '
                     "THEN 'transactions'\n"
