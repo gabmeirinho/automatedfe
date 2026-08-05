@@ -9,11 +9,18 @@ dependencies = [
     "polars>=1.43.2",
 ]
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = ["src", "."]
 testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/automatedfe"]
