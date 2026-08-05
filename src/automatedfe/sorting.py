@@ -96,8 +96,8 @@ def sort_transactions(
     If both inputs contain ``merchant_category_code``, null transaction codes
     are filled from the matching merchant while non-null transaction codes are
     preserved. If neither source has a code, ``"0"`` is used as the resolved
-    value. The original code and its source are written to companion columns.
-    Leaving either path as ``None`` skips that enrichment.
+    value in the single ``merchant_category_code`` output column. Leaving
+    either path as ``None`` skips that enrichment.
     """
 
     input_path = _validate_input_path(input_path, "Input")
@@ -172,13 +172,7 @@ def sort_transactions(
         enrichment_columns = [output_column for _, _, output_column in relation_paths]
         excluded_columns = {column for column in enrichment_columns if column in columns}
         if resolve_merchant_category_code:
-            excluded_columns.update(
-                {
-                    "merchant_category_code",
-                    "merchant_category_code_original",
-                    "merchant_category_code_source",
-                }
-            )
+            excluded_columns.add("merchant_category_code")
         select_columns = [
             _zero_filled_expression(column, column_type)
             for column, column_type in input_schema
@@ -202,19 +196,9 @@ def sort_transactions(
             parameters.append(str(relation_path))
 
         if resolve_merchant_category_code:
-            select_columns.extend(
-                [
-                    't."merchant_category_code" AS "merchant_category_code_original"',
-                    'coalesce(t."merchant_category_code", '
-                    'm."merchant_category_code", \'0\') AS "merchant_category_code"',
-                    "CASE\n"
-                    '    WHEN t."merchant_category_code" IS NOT NULL '
-                    "THEN 'transactions'\n"
-                    '    WHEN m."merchant_category_code" IS NOT NULL '
-                    "THEN 'merchants'\n"
-                    "    ELSE 'missing'\n"
-                    'END AS "merchant_category_code_source"',
-                ]
+            select_columns.append(
+                'coalesce(t."merchant_category_code", '
+                'm."merchant_category_code", \'0\') AS "merchant_category_code"'
             )
 
         # DuckDB does not bind a parameter used as the COPY destination in the

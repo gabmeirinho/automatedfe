@@ -127,6 +127,15 @@ def test_sort_transactions_enriches_card_brand_and_document_type(tmp_path):
         merchants_path=merchants_path,
     )
 
+    columns = [
+        row[0]
+        for row in duckdb.sql(
+            "DESCRIBE SELECT * FROM read_parquet(?)",
+            params=[str(output_path)],
+        ).fetchall()
+    ]
+    assert "merchant_category_code" in columns
+
     rows = duckdb.sql(
         """
         SELECT
@@ -134,19 +143,17 @@ def test_sort_transactions_enriches_card_brand_and_document_type(tmp_path):
             card_token_id,
             card_brand,
             document_type,
-            merchant_category_code_original,
-            merchant_category_code,
-            merchant_category_code_source
+            merchant_category_code
         FROM read_parquet(?)
         """,
         params=[str(output_path)],
     ).fetchall()
 
     assert rows == [
-        (10, 0, "0", "cnpj", None, "5812", "merchants"),
-        (10, 100, "visa", "cnpj", "5999", "5999", "transactions"),
-        (20, 200, "mastercard", "cpf", "5812", "5812", "transactions"),
-        (30, 300, "0", "0", None, "0", "missing"),
+        (10, 0, "0", "cnpj", "5812"),
+        (10, 100, "visa", "cnpj", "5999"),
+        (20, 200, "mastercard", "cpf", "5812"),
+        (30, 300, "0", "0", "0"),
     ]
 
 
