@@ -6,7 +6,12 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "duckdb>=1.5.5",
+    "geneticengine",
+    "numba>=0.66.0",
+    "numpy==2.2.6",
     "polars>=1.43.2",
+    "pyarrow>=25.0.0",
+    "scikit-learn==1.7.2",
 ]
 
 [build-system]
@@ -24,3 +29,6 @@ testpaths = ["tests"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/automatedfe"]
+
+[tool.uv.sources]
+geneticengine = { path = "../GeneticEngine", editable = true }
