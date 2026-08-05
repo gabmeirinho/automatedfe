@@ -1,6 +1,6 @@
 import duckdb
 
-from scripts.check_transactions_sorted import first_sorting_violation
+from automatedfe.validation import first_sorting_violation
 from tests.conftest import write_transactions_fixture
 
 
