@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from os import PathLike
 
 from geneticengine.algorithms.gp.gp import (
@@ -20,6 +21,8 @@ from geneticengine.solutions.individual import PhenotypicIndividual
 
 from .feature_materialization import FeatureMaterializer
 from .grammar import Feature, Mean, WindowIndex, build_grammar
+
+logger = logging.getLogger(__name__)
 
 
 def build_search_algorithm(
@@ -93,8 +96,12 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
     ) -> None:
         """Materialize all already-generated individuals in this generation."""
 
-        del generation
         phenotypes = [individual.get_phenotype() for individual in individuals]
+        logger.info(
+            "Materializing generation %d: %d GP features",
+            generation,
+            len(phenotypes),
+        )
         self.materializer.materialize_population(phenotypes)
 
 

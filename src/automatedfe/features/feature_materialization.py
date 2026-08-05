@@ -12,6 +12,7 @@ call, so repeated evaluations have simple, predictable behaviour.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from os import PathLike
 from pathlib import Path
@@ -26,6 +27,8 @@ from .kernels import aggregate
 MERCHANT_ID_COLUMN = "merchant_id"
 CREATED_AT_COLUMN = "created_at"
 FEATURE_MMAP_SUFFIX = ".mmap"
+
+logger = logging.getLogger(__name__)
 
 
 def _feature_spec(individual: FeatureSpec | Any) -> FeatureSpec:
@@ -148,6 +151,10 @@ class FeatureMaterializer:
         output_path = None
         if self.output_dir is not None:
             output_path = self.output_dir / f"{spec.name}{FEATURE_MMAP_SUFFIX}"
+        if output_path is None:
+            logger.info("Materializing feature: %s", spec.name)
+        else:
+            logger.info("Materializing feature: %s -> %s", spec.name, output_path)
         return materialize_feature(
             spec,
             self.columns,
