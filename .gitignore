@@ -1,3 +1,6 @@
 /data
 
 test.py
+
+__pycache__/
+*.py[cod]

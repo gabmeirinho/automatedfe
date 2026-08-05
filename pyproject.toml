@@ -8,3 +8,12 @@ dependencies = [
     "duckdb>=1.5.5",
     "polars>=1.43.2",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
