@@ -14,10 +14,13 @@ the mean of the one available base feature, ``"amount"``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from os import PathLike
 from typing import Annotated, Callable
 
 from geneticengine.algorithms.gp.gp import GeneticProgramming
 from geneticengine.evaluation.budget import SearchBudget
+from geneticengine.evaluation.recorder import CSVSearchRecorder
+from geneticengine.evaluation.tracker import ProgressTracker
 from geneticengine.grammar import extract_grammar
 from geneticengine.grammar.grammar import Grammar
 from geneticengine.grammar.metahandlers.ints import IntRange
@@ -73,8 +76,9 @@ def build_search_algorithm(
     *,
     population_size: int = 20,
     seed: int = 42,
+    csv_path: str | PathLike[str] | None = None,
 ) -> GeneticProgramming:
-    """Configure GeneticEngine GP with the caller-provided search budget."""
+    """Configure GP and optionally record every evaluation to a CSV file."""
 
     if population_size <= 0:
         raise ValueError("population_size must be positive")
@@ -88,12 +92,29 @@ def build_search_algorithm(
         fitness_function=fitness_function,
         minimize=False,
     )
+    tracker = None
+    if csv_path is not None:
+        recorder = CSVSearchRecorder(
+            csv_path=str(csv_path),
+            problem=problem,
+            fields={
+                "Generation": lambda _t, individual, _p: individual.metadata["generation"],
+                "Expression": lambda _t, individual, _p: individual.get_phenotype(),
+                "Feature": lambda _t, individual, _p: individual.get_phenotype().feature,
+                "Window": lambda _t, individual, _p: individual.get_phenotype().selected_window.name,
+                "Fitness": lambda _t, individual, p: individual.get_fitness(p).fitness_components[0],
+            },
+            only_record_best_individuals=False,
+        )
+        tracker = ProgressTracker(problem, recorders=[recorder])
+
     return GeneticProgramming(
         problem=problem,
         budget=budget,
         representation=representation,
         population_size=population_size,
         random=random,
+        tracker=tracker,
     )
 
 

@@ -1,4 +1,5 @@
 import pytest
+import csv
 from typing import get_type_hints
 
 from geneticengine.evaluation.budget import EvaluationBudget
@@ -56,6 +57,28 @@ def test_search_uses_the_given_budget_and_max_depth_one():
     algorithm.search()
 
     assert algorithm.tracker.get_number_evaluations() == 10
+
+
+def test_tracker_records_every_evaluation_to_csv(tmp_path):
+    csv_path = tmp_path / "gp_search.csv"
+    algorithm = build_search_algorithm(
+        build_grammar(),
+        lambda expression: float(expression.window),
+        EvaluationBudget(10),
+        population_size=10,
+        seed=123,
+        csv_path=csv_path,
+    )
+
+    algorithm.search()
+
+    with csv_path.open(newline="") as csv_file:
+        rows = list(csv.DictReader(csv_file))
+
+    assert len(rows) == algorithm.tracker.get_number_evaluations()
+    assert list(rows[0]) == ["Generation", "Expression", "Feature", "Window", "Fitness"]
+    assert {row["Feature"] for row in rows} == {AMOUNT_COLUMN}
+    assert all(row["Expression"].startswith("mean_amount_") for row in rows)
 
 
 def test_search_requires_a_positive_population_size():
