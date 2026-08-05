@@ -223,7 +223,11 @@ def sort_transactions(
 
 
 def sort_dataset(input_path: Path, output_path: Path, *, force: bool = False) -> None:
-    """Sort *input_path* by ``event_timestamp`` into *output_path*."""
+    """Sort *input_path* by ``event_timestamp`` into *output_path*.
+
+    Null values are replaced with a type-compatible zero value before the
+    rows are written to the transformed dataset.
+    """
 
     input_path = input_path.resolve()
     output_path = output_path.resolve()
@@ -241,23 +245,23 @@ def sort_dataset(input_path: Path, output_path: Path, *, force: bool = False) ->
 
     connection = duckdb.connect()
     try:
-        columns = {
-            row[0]
-            for row in connection.execute(
-                "DESCRIBE SELECT * FROM read_parquet(?)", [str(input_path)]
-            ).fetchall()
-        }
+        input_schema = _schema(connection, input_path)
+        columns = {column for column, _ in input_schema}
         if "event_timestamp" not in columns:
             raise ValueError(
                 "Input parquet is missing the required column: event_timestamp"
             )
 
+        select_columns = [
+            _zero_filled_expression(column, column_type)
+            for column, column_type in input_schema
+        ]
         output_sql_path = str(output_path).replace("'", "''")
         connection.execute(
             f"""
             COPY (
-                SELECT *
-                FROM read_parquet(?)
+                SELECT {', '.join(select_columns)}
+                FROM read_parquet(?) AS t
                 ORDER BY event_timestamp
             )
             TO '{output_sql_path}'

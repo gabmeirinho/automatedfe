@@ -31,6 +31,37 @@ def test_sort_dataset_orders_rows(tmp_path):
     ]
 
 
+def test_sort_dataset_replaces_null_values_with_zero(tmp_path):
+    input_path = tmp_path / "input.parquet"
+    output_path = tmp_path / "output.parquet"
+    duckdb.sql(
+        """
+        COPY (
+            SELECT * FROM VALUES
+                (
+                    NULL::TIMESTAMP,
+                    NULL::BIGINT,
+                    NULL::VARCHAR
+                )
+            AS t(event_timestamp, value, status)
+        ) TO ? (FORMAT PARQUET)
+        """,
+        params=[str(input_path)],
+    )
+
+    sort_dataset(input_path, output_path)
+
+    rows = duckdb.sql(
+        """
+        SELECT CAST(event_timestamp AS VARCHAR), value, status
+        FROM read_parquet(?)
+        """,
+        params=[str(output_path)],
+    ).fetchall()
+
+    assert rows == [("1970-01-01 00:00:00", 0, "0")]
+
+
 def test_sort_dataset_rejects_missing_required_column(tmp_path):
     input_path = tmp_path / "input.parquet"
     output_path = tmp_path / "output.parquet"
