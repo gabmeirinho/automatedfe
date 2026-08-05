@@ -67,6 +67,11 @@ def main() -> None:
         action="store_true",
         help="Replace existing sort outputs",
     )
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="Show a live DuckDB progress bar for long-running queries",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -79,6 +84,7 @@ def main() -> None:
         dataset_output_path=args.dataset_output,
         mapping_path=args.mapping,
         force=args.force,
+        progress=args.progress,
     )
     print(f"Encoded transactions written to {args.transformed.resolve()}")
     print(f"Label mapping written to {args.mapping.resolve()}")

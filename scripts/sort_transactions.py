@@ -47,6 +47,11 @@ def main() -> None:
         action="store_true",
         help="Replace the output file if it already exists",
     )
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="Show a live DuckDB progress bar for long-running queries",
+    )
     args = parser.parse_args()
     sort_transactions(
         args.input,
@@ -54,6 +59,7 @@ def main() -> None:
         card_tokens_path=args.card_tokens,
         merchants_path=args.merchants,
         force=args.force,
+        progress=args.progress,
     )
     print(f"Sorted transactions written to {args.output.resolve()}")
 

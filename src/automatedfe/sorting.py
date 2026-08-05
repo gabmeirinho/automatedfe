@@ -85,6 +85,14 @@ def _validate_input_path(input_path: Path, label: str) -> Path:
     return input_path
 
 
+def _enable_progress_bar(connection: duckdb.DuckDBPyConnection) -> None:
+    """Show a live progress bar for queries running longer than 500 ms."""
+
+    connection.execute("PRAGMA enable_progress_bar")
+    connection.execute("PRAGMA progress_bar_time = 500")
+    logger.info("Progress bar enabled (shows after 0.5s of query time)")
+
+
 def sort_transactions(
     input_path: Path,
     output_path: Path,
@@ -92,6 +100,7 @@ def sort_transactions(
     card_tokens_path: Path | None = None,
     merchants_path: Path | None = None,
     force: bool = False,
+    progress: bool = False,
 ) -> None:
     """Enrich and sort transactions by merchant and creation time.
 
@@ -102,6 +111,9 @@ def sort_transactions(
     preserved. If neither source has a code, ``"0"`` is used as the resolved
     value in the single ``merchant_category_code`` output column. Leaving
     either path as ``None`` skips that enrichment.
+
+    When *progress* is true, DuckDB prints a live progress bar to stderr for
+    queries that run longer than 0.5 seconds.
     """
 
     input_path = _validate_input_path(input_path, "Input")
@@ -134,6 +146,8 @@ def sort_transactions(
         # will spill intermediate sort data to its temporary directory when
         # necessary.
         connection.execute("SET memory_limit = ?", [DUCKDB_MEMORY_LIMIT])
+        if progress:
+            _enable_progress_bar(connection)
 
         input_schema = _schema(connection, input_path)
         columns = {column for column, _ in input_schema}
@@ -253,8 +267,14 @@ def sort_transactions(
     )
 
 
-def sort_dataset(input_path: Path, output_path: Path, *, force: bool = False) -> None:
-    """Sort *input_path* by ``event_timestamp`` into *output_path*."""
+def sort_dataset(
+    input_path: Path, output_path: Path, *, force: bool = False, progress: bool = False
+) -> None:
+    """Sort *input_path* by ``event_timestamp`` into *output_path*.
+
+    When *progress* is true, DuckDB prints a live progress bar to stderr for
+    queries that run longer than 0.5 seconds.
+    """
 
     input_path = input_path.resolve()
     output_path = output_path.resolve()
@@ -279,6 +299,8 @@ def sort_dataset(input_path: Path, output_path: Path, *, force: bool = False) ->
     start = time.perf_counter()
     connection = duckdb.connect()
     try:
+        if progress:
+            _enable_progress_bar(connection)
         columns = {
             row[0]
             for row in connection.execute(

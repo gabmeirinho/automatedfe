@@ -32,6 +32,16 @@ def test_sort_transactions_orders_rows_and_preserves_data(tmp_path):
     ]
 
 
+def test_sort_transactions_with_progress_bar(tmp_path):
+    input_path = tmp_path / "input.parquet"
+    output_path = tmp_path / "output.parquet"
+    write_transactions_fixture(input_path)
+
+    sort_transactions(input_path, output_path, progress=True)
+
+    assert len(read_rows(output_path)) == 4
+
+
 def test_sort_transactions_rejects_missing_input(tmp_path):
     with pytest.raises(FileNotFoundError, match="does not exist"):
         sort_transactions(tmp_path / "missing.parquet", tmp_path / "output.parquet")

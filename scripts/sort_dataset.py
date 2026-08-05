@@ -33,8 +33,13 @@ def main() -> None:
         action="store_true",
         help="Replace the output file if it already exists",
     )
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="Show a live DuckDB progress bar for long-running queries",
+    )
     args = parser.parse_args()
-    sort_dataset(args.input, args.output, force=args.force)
+    sort_dataset(args.input, args.output, force=args.force, progress=args.progress)
     print(f"Sorted dataset written to {args.output.resolve()}")
 
 

@@ -51,3 +51,17 @@ def test_sort_dataset_requires_force_for_existing_output(tmp_path):
 
     with pytest.raises(FileExistsError, match="already exists"):
         sort_dataset(input_path, output_path)
+
+
+def test_sort_dataset_with_progress_bar(tmp_path):
+    input_path = tmp_path / "input.parquet"
+    output_path = tmp_path / "output.parquet"
+    write_dataset_fixture(input_path)
+
+    sort_dataset(input_path, output_path, progress=True)
+
+    assert read_rows(output_path) == [
+        ("2024-01-01 00:00:00", "earliest"),
+        ("2024-02-01 00:00:00", "middle"),
+        ("2024-02-02 00:00:00", "later"),
+    ]
