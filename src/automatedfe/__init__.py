@@ -8,6 +8,7 @@ from .encoding import (
     fit_label_mapping,
     load_label_mapping,
 )
+from .preprocessing import preprocess
 from .sorting import (
     DEFAULT_CARD_TOKENS_INPUT,
     DEFAULT_DATASET_INPUT,
@@ -37,6 +38,7 @@ __all__ = [
     "first_sorting_violation",
     "fit_label_mapping",
     "load_label_mapping",
+    "preprocess",
     "sort_dataset",
     "sort_transactions",
 ]
