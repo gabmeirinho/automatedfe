@@ -10,10 +10,14 @@ import automatedfe.features.gp as gp_module
 from automatedfe.features import (
     AMOUNT_COLUMN,
     WINDOW_CATALOG,
+    AggregationFeature,
     Aggregation,
+    Count,
     Feature,
+    Max,
     MaterializingGeneticProgramming,
     Mean,
+    Sum,
     WindowIndex,
     build_grammar,
     build_search_algorithm,
@@ -43,11 +47,17 @@ def write_mmap_fixture(path):
     return path
 
 
-def test_grammar_is_a_depth_one_mean_with_feature_and_window_parameters():
+def test_grammar_contains_all_kernel_aggregations():
     grammar = build_grammar()
 
-    assert grammar.starting_symbol is Mean
+    assert grammar.starting_symbol is AggregationFeature
     assert grammar.get_min_tree_depth() == 1
+    assert grammar.alternatives[AggregationFeature] == [Count, Sum, Mean, Max]
+
+
+def test_mean_has_feature_and_window_parameters():
+    grammar = build_grammar()
+
     assert list(Mean.__annotations__) == ["feature", "window"]
     annotations = get_type_hints(Mean, include_extras=True)
     assert annotations["feature"] == Feature
@@ -65,6 +75,25 @@ def test_mean_maps_its_feature_and_window_to_a_feature_spec(window_i):
     assert spec.input_column == AMOUNT_COLUMN
     assert spec.window == WINDOW_CATALOG[window_i]
     assert str(expression) == spec.name
+
+
+@pytest.mark.parametrize(
+    "expression, aggregation, input_column",
+    [
+        (Count(0), Aggregation.COUNT, None),
+        (Sum(AMOUNT_COLUMN, 0), Aggregation.SUM, AMOUNT_COLUMN),
+        (Mean(AMOUNT_COLUMN, 0), Aggregation.MEAN, AMOUNT_COLUMN),
+        (Max(AMOUNT_COLUMN, 0), Aggregation.MAX, AMOUNT_COLUMN),
+    ],
+)
+def test_kernel_aggregation_nodes_map_to_feature_specs(
+    expression, aggregation, input_column
+):
+    spec = expression.to_feature_spec()
+
+    assert spec.aggregation is aggregation
+    assert spec.input_column == input_column
+    assert spec.window == WINDOW_CATALOG[0]
 
 
 def test_search_uses_the_given_budget_and_max_depth_one(tmp_path):
@@ -133,8 +162,13 @@ def test_tracker_records_every_evaluation_to_csv(tmp_path):
 
     assert len(rows) == algorithm.tracker.get_number_evaluations()
     assert list(rows[0]) == ["Generation", "Expression", "Feature", "Window", "Fitness"]
-    assert {row["Feature"] for row in rows} == {AMOUNT_COLUMN}
-    assert all(row["Expression"].startswith("mean_amount_") for row in rows)
+    assert {row["Feature"] for row in rows} <= {"", AMOUNT_COLUMN}
+    assert all(
+        row["Expression"].startswith(
+            ("count_transactions_", "sum_amount_", "mean_amount_", "max_amount_")
+        )
+        for row in rows
+    )
 
 
 def test_search_requires_a_positive_population_size(tmp_path):
@@ -200,7 +234,7 @@ def test_search_defaults_every_fitness_to_zero(tmp_path):
     best = algorithm.search()
 
     assert algorithm.tracker.get_number_evaluations() == 4
-    assert isinstance(best[0].get_phenotype(), Mean)
+    assert isinstance(best[0].get_phenotype(), AggregationFeature)
     assert best[0].get_fitness(algorithm.problem).fitness_components == [0.0]
 
 

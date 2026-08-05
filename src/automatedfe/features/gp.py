@@ -20,7 +20,16 @@ from geneticengine.representations.tree.treebased import TreeBasedRepresentation
 from geneticengine.solutions.individual import PhenotypicIndividual
 
 from .feature_materialization import FeatureMaterializer
-from .grammar import Feature, Mean, WindowIndex, build_grammar
+from .grammar import (
+    AggregationFeature,
+    Count,
+    Feature,
+    Max,
+    Mean,
+    Sum,
+    WindowIndex,
+    build_grammar,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +53,8 @@ def build_search_algorithm(
     random = NativeRandomSource(seed)
     representation = TreeBasedRepresentation(
         grammar,
+        # The abstract root is collapsed by GeneticEngine's depth metric, so
+        # all four aggregation productions remain depth-one trees.
         MaxDepthDecider(random, grammar, max_depth=1),
     )
     problem = SingleObjectiveProblem(
@@ -106,9 +117,13 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
 
 
 __all__ = [
+    "AggregationFeature",
+    "Count",
     "Feature",
+    "Max",
     "MaterializingGeneticProgramming",
     "Mean",
+    "Sum",
     "WindowIndex",
     "build_grammar",
     "build_search_algorithm",
