@@ -1,8 +1,8 @@
 """Sort the transactions parquet dataset with DuckDB.
 
-The source dataset calls its timestamp column ``created_at``.  By default the
-sorted data is written to ``data/loan/transactions_sorted.parquet`` so the
-original file is preserved.
+The source dataset calls its timestamp column ``created_at``. By default the
+sorted data is written to ``data/loan/transformed/transactions.parquet`` so
+the original file is preserved.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import duckdb
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_INPUT = PROJECT_ROOT / "data" / "loan" / "transactions.parquet"
-DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "loan" / "transactions_sorted.parquet"
+DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "loan" / "transformed" / "transactions.parquet"
 DUCKDB_MEMORY_LIMIT = "16GB"
 
 

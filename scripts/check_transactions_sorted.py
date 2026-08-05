@@ -1,13 +1,18 @@
-"""Check that transactions are physically ordered by merchant and timestamp."""
+"""Check that transformed transactions are physically ordered by merchant and timestamp."""
 
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import duckdb
 
-from sort_transactions import DEFAULT_OUTPUT, DUCKDB_MEMORY_LIMIT
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from sort_transactions import DEFAULT_OUTPUT, DUCKDB_MEMORY_LIMIT  # noqa: E402
 
 
 def first_sorting_violation(input_path: Path) -> tuple | None:
