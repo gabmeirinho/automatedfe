@@ -1,7 +1,9 @@
 """Backward-compatible wrapper for the transaction sorting CLI."""
 
 from automatedfe.sorting import (
+    DEFAULT_CARD_TOKENS_INPUT,
     DEFAULT_INPUT,
+    DEFAULT_MERCHANTS_INPUT,
     DEFAULT_OUTPUT,
     DUCKDB_MEMORY_LIMIT,
     PROJECT_ROOT,
@@ -11,6 +13,8 @@ from scripts.sort_transactions import main
 
 __all__ = [
     "DEFAULT_INPUT",
+    "DEFAULT_CARD_TOKENS_INPUT",
+    "DEFAULT_MERCHANTS_INPUT",
     "DEFAULT_OUTPUT",
     "DUCKDB_MEMORY_LIMIT",
     "PROJECT_ROOT",

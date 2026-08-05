@@ -76,3 +76,66 @@ def test_sort_transactions_rejects_missing_required_column(tmp_path):
 
     with pytest.raises(ValueError, match="created_at"):
         sort_transactions(input_path, output_path)
+
+
+def test_sort_transactions_enriches_card_brand_and_document_type(tmp_path):
+    input_path = tmp_path / "input.parquet"
+    card_tokens_path = tmp_path / "card_tokens.parquet"
+    merchants_path = tmp_path / "merchants.parquet"
+    output_path = tmp_path / "output.parquet"
+
+    duckdb.sql(
+        """
+        COPY (
+            SELECT * FROM VALUES
+                (20, TIMESTAMP '2024-01-02 00:00:00', 200),
+                (10, TIMESTAMP '2024-01-02 00:00:00', 100),
+                (10, TIMESTAMP '2024-01-01 00:00:00', NULL)
+            AS t(merchant_id, created_at, card_token_id)
+        ) TO ? (FORMAT PARQUET)
+        """,
+        params=[str(input_path)],
+    )
+    duckdb.sql(
+        """
+        COPY (
+            SELECT * FROM VALUES
+                (100, 'visa'),
+                (200, 'mastercard')
+            AS t(id, card_brand)
+        ) TO ? (FORMAT PARQUET)
+        """,
+        params=[str(card_tokens_path)],
+    )
+    duckdb.sql(
+        """
+        COPY (
+            SELECT * FROM VALUES
+                (10, 'cnpj'),
+                (20, 'cpf')
+            AS t(id, document_type)
+        ) TO ? (FORMAT PARQUET)
+        """,
+        params=[str(merchants_path)],
+    )
+
+    sort_transactions(
+        input_path,
+        output_path,
+        card_tokens_path=card_tokens_path,
+        merchants_path=merchants_path,
+    )
+
+    rows = duckdb.sql(
+        """
+        SELECT merchant_id, card_token_id, card_brand, document_type
+        FROM read_parquet(?)
+        """,
+        params=[str(output_path)],
+    ).fetchall()
+
+    assert rows == [
+        (10, None, None, "cnpj"),
+        (10, 100, "visa", "cnpj"),
+        (20, 200, "mastercard", "cpf"),
+    ]
