@@ -19,7 +19,7 @@ from automatedfe.features import (
     Mean,
     Sum,
     WindowIndex,
-    build_grammar,
+    build_transaction_grammar,
     build_search_algorithm,
 )
 
@@ -48,7 +48,7 @@ def write_mmap_fixture(path):
 
 
 def test_grammar_contains_all_kernel_aggregations():
-    grammar = build_grammar()
+    grammar = build_transaction_grammar()
 
     assert grammar.starting_symbol is AggregationFeature
     assert grammar.get_min_tree_depth() == 1
@@ -56,7 +56,7 @@ def test_grammar_contains_all_kernel_aggregations():
 
 
 def test_mean_has_feature_and_window_parameters():
-    grammar = build_grammar()
+    grammar = build_transaction_grammar()
 
     assert list(Mean.__annotations__) == ["feature", "window"]
     annotations = get_type_hints(Mean, include_extras=True)
@@ -97,7 +97,7 @@ def test_kernel_aggregation_nodes_map_to_feature_specs(
 
 
 def test_search_uses_the_given_budget_and_max_depth_one(tmp_path):
-    grammar = build_grammar()
+    grammar = build_transaction_grammar()
     budget = EvaluationBudget(10)
     algorithm = build_search_algorithm(
         grammar,
@@ -132,7 +132,7 @@ def test_mmap_dir_is_passed_to_feature_materializer(tmp_path, monkeypatch):
     feature_cache_dir = tmp_path / "features"
 
     algorithm = build_search_algorithm(
-        build_grammar(),
+        build_transaction_grammar(),
         EvaluationBudget(1),
         mmap_dir=mmap_dir,
         feature_cache_dir=feature_cache_dir,
@@ -149,7 +149,7 @@ def test_mmap_dir_is_passed_to_feature_materializer(tmp_path, monkeypatch):
 def test_tracker_records_every_evaluation_to_csv(tmp_path):
     csv_path = tmp_path / "gp_search.csv"
     algorithm = build_search_algorithm(
-        build_grammar(),
+        build_transaction_grammar(),
         EvaluationBudget(10),
         population_size=10,
         seed=123,
@@ -175,7 +175,7 @@ def test_tracker_records_every_evaluation_to_csv(tmp_path):
 
 def test_search_tracks_the_final_generated_population(tmp_path):
     algorithm = build_search_algorithm(
-        build_grammar(),
+        build_transaction_grammar(),
         EvaluationBudget(10),
         population_size=10,
         seed=123,
@@ -190,7 +190,7 @@ def test_search_tracks_the_final_generated_population(tmp_path):
 def test_search_requires_a_positive_population_size(tmp_path):
     with pytest.raises(ValueError, match="population_size must be positive"):
         build_search_algorithm(
-            build_grammar(),
+            build_transaction_grammar(),
             EvaluationBudget(1),
             population_size=0,
             mmap_dir=tmp_path / "mmap",
@@ -199,7 +199,7 @@ def test_search_requires_a_positive_population_size(tmp_path):
 
 def test_search_materializes_the_complete_initial_population(tmp_path):
     algorithm = build_search_algorithm(
-        build_grammar(),
+        build_transaction_grammar(),
         EvaluationBudget(10),
         population_size=10,
         seed=123,
@@ -217,7 +217,7 @@ def test_search_materializes_the_complete_initial_population(tmp_path):
 
 def test_search_defaults_every_fitness_to_zero(tmp_path):
     algorithm = build_search_algorithm(
-        build_grammar(),
+        build_transaction_grammar(),
         EvaluationBudget(4),
         population_size=4,
         mmap_dir=write_mmap_fixture(tmp_path / "mmap"),
@@ -234,7 +234,7 @@ def test_same_seed_produces_same_initial_population_and_results(tmp_path):
 
     def build(seed, *, csv_path=None):
         return build_search_algorithm(
-            build_grammar(),
+            build_transaction_grammar(),
             EvaluationBudget(10),
             population_size=10,
             seed=seed,

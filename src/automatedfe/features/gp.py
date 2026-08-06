@@ -30,6 +30,7 @@ from .grammar import (
     Sum,
     WindowIndex,
     build_grammar,
+    build_transaction_grammar,
 )
 
 logger = logging.getLogger(__name__)
@@ -166,5 +167,6 @@ __all__ = [
     "Sum",
     "WindowIndex",
     "build_grammar",
+    "build_transaction_grammar",
     "build_search_algorithm",
 ]
