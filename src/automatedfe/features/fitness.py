@@ -185,13 +185,13 @@ class LogisticRegressionFitness:
                     roc_auc_score(y_validation, model.predict_proba(x_validation)[:, 1])
                 )
             self.fold_scores.append(score)
-        logger.info(
-            "Split %d/%d %s score=%.4f",
-            len(self.fold_scores),
-            len(self.cv_splits),
-            individual,
-            score,
-        )
+            logger.info(
+                "Split %d/%d %s score=%.4f",
+                len(self.fold_scores),
+                len(self.cv_splits),
+                individual,
+                score,
+            )
 
         self.last_model = self.last_models[-1]
         return float(np.mean(self.fold_scores))
