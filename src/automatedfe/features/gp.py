@@ -20,7 +20,7 @@ from geneticengine.representations.tree.treebased import TreeBasedRepresentation
 from geneticengine.solutions.individual import PhenotypicIndividual
 
 from .feature_materialization import FeatureMaterializer
-from .fitness import LogisticRegressionFitness
+from .fitness import DEFAULT_N_SPLITS, LogisticRegressionFitness
 from .grammar import (
     AggregationFeature,
     Count,
@@ -45,15 +45,15 @@ def build_search_algorithm(
     mmap_dir: str | PathLike[str],
     feature_output_dir: str | PathLike[str] | None = None,
     dataset_path: str | PathLike[str] | None = None,
-    validation_fraction: float = 0.2,
+    n_splits: int = DEFAULT_N_SPLITS,
     score_metric: str = "roc_auc",
     fitness_random_state: int = 42,
 ) -> GeneticProgramming:
     """Configure the materializing GP search.
 
     If *dataset_path* is supplied, each generated feature is evaluated with a
-    fresh logistic-regression fit on the chronological training/validation
-    split defined by :class:`LogisticRegressionFitness`. Leaving it ``None``
+    fresh logistic-regression fit on the chronological cross-validation folds
+    defined by :class:`LogisticRegressionFitness`. Leaving it ``None``
     preserves the zero-fitness configuration used by materialization-only
     callers and older experiments.
     """
@@ -74,7 +74,7 @@ def build_search_algorithm(
         fitness_evaluator = LogisticRegressionFitness(
             materializer,
             dataset_path,
-            validation_fraction=validation_fraction,
+            n_splits=n_splits,
             score_metric=score_metric,
             random_state=fitness_random_state,
         )
