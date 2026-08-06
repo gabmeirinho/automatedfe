@@ -162,6 +162,7 @@ def test_preprocess_force_replaces_existing_outputs(tmp_path):
         dataset_path=paths["dataset"],
         dataset_output_path=dataset_output_path,
         mapping_path=mapping_path,
+        mmap_dir=mmap_dir,
         force=True,
     )
 
