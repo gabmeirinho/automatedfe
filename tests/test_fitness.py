@@ -5,10 +5,8 @@ import numpy as np
 import pytest
 
 from automatedfe.features import (
-    Aggregation,
     FeatureMaterializer,
-    FeatureSpec,
-    RowWindow,
+    TxFeature,
 )
 from automatedfe.features.fitness import LogisticRegressionFitness
 
@@ -55,7 +53,7 @@ def test_fitness_uses_ordered_training_rows_and_excludes_test_rows(tmp_path):
     }
     materializer = FeatureMaterializer(columns)
     evaluator = LogisticRegressionFitness(materializer, dataset_path)
-    spec = FeatureSpec(Aggregation.MEAN, "amount", RowWindow(1))
+    spec = TxFeature("mean", "amount", 1, "row")
 
     assert evaluator.score_metric == "roc_auc"
     evaluator.prepare_population([spec])

@@ -16,7 +16,6 @@ from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit
 
 from .feature_materialization import FeatureMaterializer
-from .feature_spec import FeatureSpec
 
 logger = logging.getLogger(__name__)
 
@@ -142,20 +141,20 @@ class LogisticRegressionFitness:
         self.fold_scores: list[float] = []
         self.last_models: list[LogisticRegression] = []
 
-    def _values_for(self, individual: FeatureSpec | Any) -> np.ndarray:
+    def _values_for(self, individual: Any) -> np.ndarray:
         return self.materializer.materialize_for_events(
             individual,
             self.event_merchants,
             self.event_timestamps,
         )
 
-    def prepare_population(self, individuals: Sequence[FeatureSpec | Any]) -> None:
+    def prepare_population(self, individuals: Sequence[Any]) -> None:
         """Calculate and cache every feature before population evaluation."""
 
         for individual in individuals:
             self._values_for(individual)
 
-    def __call__(self, individual: FeatureSpec | Any) -> float:
+    def __call__(self, individual: Any) -> float:
         values = self._values_for(individual).reshape(-1, 1)
         self.fold_scores = []
         self.last_models = []

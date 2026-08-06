@@ -5,10 +5,9 @@ import pytest
 
 import automatedfe.features.feature_materialization as feature_materialization
 from automatedfe.features import (
-    Aggregation,
-    FeatureSpec,
     FeatureMaterializer,
     RowWindow,
+    TxFeature,
     materialize_feature,
 )
 from automatedfe.transaction_materialization import (
@@ -193,7 +192,7 @@ def test_materialize_feature_uses_transaction_mmaps_and_can_write_derived_mmap(t
         "amount": np.array([10.0, 20.0, 30.0, 100.0]),
         "created_at": np.array([1, 2, 3, 1], dtype=np.int64),
     }
-    spec = FeatureSpec(Aggregation.MEAN, "amount", RowWindow(2))
+    spec = TxFeature("mean", "amount", RowWindow(2).rows, "row")
     output_path = tmp_path / "mean_amount_last_2_rows.mmap"
 
     result = materialize_feature(spec, columns, output_path=output_path)
@@ -205,7 +204,7 @@ def test_materialize_feature_uses_transaction_mmaps_and_can_write_derived_mmap(t
 
 
 def test_materialize_feature_rejects_missing_required_mmap_column():
-    spec = FeatureSpec(Aggregation.MEAN, "amount", RowWindow(2))
+    spec = TxFeature("mean", "amount", RowWindow(2).rows, "row")
 
     with pytest.raises(ValueError, match="missing column.*amount"):
         materialize_feature(spec, {"merchant_id": np.array([1, 1])})
@@ -217,16 +216,16 @@ def test_feature_materializer_reuses_a_feature_within_a_run(monkeypatch, tmp_pat
         "amount": np.array([10.0, 20.0, 30.0, 100.0]),
         "created_at": np.array([1, 2, 3, 1], dtype=np.int64),
     }
-    spec = FeatureSpec(Aggregation.MEAN, "amount", RowWindow(2))
+    spec = TxFeature("mean", "amount", RowWindow(2).rows, "row")
     calls = 0
-    original = feature_materialization.materialize_feature
+    original = feature_materialization._compute_primitive
 
     def counted_materialize(*args, **kwargs):
         nonlocal calls
         calls += 1
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(feature_materialization, "materialize_feature", counted_materialize)
+    monkeypatch.setattr(feature_materialization, "_compute_primitive", counted_materialize)
     materializer = FeatureMaterializer(columns, output_dir=tmp_path / "features")
 
     first = materializer.materialize(spec)
@@ -242,16 +241,16 @@ def test_feature_materializer_deduplicates_a_population(monkeypatch):
         "merchant_id": np.array([1, 1], dtype=np.int64),
         "amount": np.array([10.0, 20.0]),
     }
-    spec = FeatureSpec(Aggregation.MEAN, "amount", RowWindow(2))
+    spec = TxFeature("mean", "amount", RowWindow(2).rows, "row")
     calls = 0
-    original = feature_materialization.materialize_feature
+    original = feature_materialization._compute_primitive
 
     def counted_materialize(*args, **kwargs):
         nonlocal calls
         calls += 1
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(feature_materialization, "materialize_feature", counted_materialize)
+    monkeypatch.setattr(feature_materialization, "_compute_primitive", counted_materialize)
     FeatureMaterializer(columns).materialize_population([spec, spec])
 
     assert calls == 1
@@ -265,7 +264,7 @@ def test_event_features_are_cached_on_disk_and_reused_across_runs(tmp_path):
     }
     events_merchants = np.array([1, 2], dtype=np.int64)
     events_timestamps = np.array([4, 6], dtype=np.int64)
-    spec = FeatureSpec(Aggregation.SUM, "amount", RowWindow(2))
+    spec = TxFeature("sum", "amount", RowWindow(2).rows, "row")
     features_dir = tmp_path / "features"
 
     first = FeatureMaterializer(columns, features_dir=features_dir)
@@ -289,7 +288,7 @@ def test_event_feature_disk_cache_invalidates_on_event_set_change(tmp_path):
         "created_at": np.array([1, 2, 3, 1, 5], dtype=np.int64),
         "amount": np.array([10.0, 20.0, 30.0, 40.0, 50.0]),
     }
-    spec = FeatureSpec(Aggregation.SUM, "amount", RowWindow(2))
+    spec = TxFeature("sum", "amount", RowWindow(2).rows, "row")
     features_dir = tmp_path / "features"
 
     first = FeatureMaterializer(columns, features_dir=features_dir)
@@ -325,7 +324,7 @@ def test_event_features_are_not_persisted_without_features_dir(tmp_path):
         "created_at": np.array([1, 2], dtype=np.int64),
         "amount": np.array([10.0, 20.0]),
     }
-    spec = FeatureSpec(Aggregation.COUNT, None, RowWindow(2))
+    spec = TxFeature("count_total", None, RowWindow(2).rows, "row")
 
     FeatureMaterializer(columns).materialize_for_events(
         spec,

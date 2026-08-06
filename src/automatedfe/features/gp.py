@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from os import PathLike
 
 from geneticengine.algorithms.gp.gp import (
     GeneticProgramming,
     GeneticProgrammingTwoPhase,
 )
-from geneticengine.evaluation.budget import TimeBudget
+from geneticengine.evaluation.budget import SearchBudget
 from geneticengine.evaluation.recorder import CSVSearchRecorder
 from geneticengine.evaluation.tracker import ProgressTracker
-from geneticengine.grammar.grammar import Grammar
 from geneticengine.problems import SingleObjectiveProblem
 from geneticengine.random.sources import NativeRandomSource
 from geneticengine.representations.tree.initializations import MaxDepthDecider
@@ -21,24 +21,15 @@ from geneticengine.solutions.individual import PhenotypicIndividual
 
 from .feature_materialization import FeatureMaterializer
 from .fitness import DEFAULT_N_SPLITS, LogisticRegressionFitness
-from .grammar import (
-    AggregationFeature,
-    Count,
-    Feature,
-    Max,
-    Mean,
-    Sum,
-    WindowIndex,
-    build_grammar,
-)
+from .grammar import build_grammar, collect_features
 
 logger = logging.getLogger(__name__)
 
 
 def build_search_algorithm(
-    grammar: Grammar,
-    budget: TimeBudget,
+    budget: SearchBudget,
     *,
+    mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None = None,
     population_size: int = 20,
     seed: int = 42,
     csv_path: str | PathLike[str] | None = None,
@@ -48,8 +39,12 @@ def build_search_algorithm(
     n_splits: int = DEFAULT_N_SPLITS,
     score_metric: str = "roc_auc",
     fitness_random_state: int = 42,
+    max_depth: int | None = None,
 ) -> GeneticProgramming:
-    """Configure the materializing GP search.
+    """Configure the GP search over the complete expression grammar.
+
+    *mapping* supplies the encoded category values used by categorical
+    terminals. When omitted, the persisted preprocessing mapping is loaded.
 
     *feature_cache_dir* stores the event-level feature values (one ``float64``
     per event) computed during the search. Features already present in the
@@ -64,14 +59,17 @@ def build_search_algorithm(
 
     if population_size <= 0:
         raise ValueError("population_size must be positive")
+    grammar = build_grammar(mapping)
+    if max_depth is None:
+        max_depth = 4
+    if max_depth <= 0:
+        raise ValueError("max_depth must be positive")
     materializer = FeatureMaterializer(mmap_dir, features_dir=feature_cache_dir)
 
     random = NativeRandomSource(seed)
     representation = TreeBasedRepresentation(
         grammar,
-        # The abstract root is collapsed by GeneticEngine's depth metric, so
-        # all four aggregation productions remain depth-one trees.
-        MaxDepthDecider(random, grammar, max_depth=1),
+        MaxDepthDecider(random, grammar, max_depth=max_depth),
     )
     fitness_evaluator = None
     if dataset_path is not None:
@@ -90,14 +88,22 @@ def build_search_algorithm(
     )
     tracker = None
     if csv_path is not None:
+        def _phenotype(individual: PhenotypicIndividual):
+            return individual.get_phenotype()
+
+        def _dependencies(individual: PhenotypicIndividual) -> str:
+            phenotype = _phenotype(individual)
+            return ";".join(
+                sorted(feature.name for feature in collect_features(phenotype))
+            )
+
         recorder = CSVSearchRecorder(
             csv_path=str(csv_path),
             problem=problem,
             fields={
                 "Generation": lambda _t, individual, _p: individual.metadata["generation"],
-                "Expression": lambda _t, individual, _p: individual.get_phenotype(),
-                "Feature": lambda _t, individual, _p: individual.get_phenotype().feature,
-                "Window": lambda _t, individual, _p: individual.get_phenotype().selected_window.name,
+                "Expression": lambda _t, individual, _p: str(_phenotype(individual)),
+                "Dependencies": lambda _t, individual, _p: _dependencies(individual),
                 "Fitness": lambda _t, individual, p: individual.get_fitness(p).fitness_components[0],
             },
             only_record_best_individuals=False,
@@ -157,14 +163,7 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
 
 
 __all__ = [
-    "AggregationFeature",
-    "Count",
-    "Feature",
-    "Max",
     "MaterializingGeneticProgramming",
-    "Mean",
-    "Sum",
-    "WindowIndex",
     "build_grammar",
     "build_search_algorithm",
 ]
