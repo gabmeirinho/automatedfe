@@ -91,10 +91,13 @@ def test_tx_feature_names_are_deterministic():
         "feat_count_total_amount_row_20"
     )
     assert TxFeature("mean", "amount", 604_800_000_000, "time").name == (
-        "feat_mean_amount_time_604800000000"
+        "feat_mean_amount_time_7d"
     )
     assert TxFeature("std", "amount", 7_776_000_000_000, "time").name == (
-        "feat_std_amount_time_7776000000000"
+        "feat_std_amount_time_90d"
+    )
+    assert TxFeature("mean", "amount", 21_600_000_000, "time").name == (
+        "feat_mean_amount_time_6h"
     )
     assert TxFeature("max", "amount", -1, "time").name == (
         "feat_max_amount_time_total"

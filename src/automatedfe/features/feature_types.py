@@ -4,7 +4,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .feature_schema import CATEGORY_KINDS, TOTAL_TIME_WINDOW
+from .feature_schema import CATEGORY_KINDS, DAY_MICROSECONDS, TOTAL_TIME_WINDOW
+
+_HOUR_MICROSECONDS = 3_600 * 1_000_000
+_MINUTE_MICROSECONDS = 60 * 1_000_000
+
+
+def _format_time_window(microseconds: int) -> str:
+    for divisor, suffix in (
+        (DAY_MICROSECONDS, "d"),
+        (_HOUR_MICROSECONDS, "h"),
+        (_MINUTE_MICROSECONDS, "m"),
+    ):
+        if microseconds % divisor == 0:
+            return f"{microseconds // divisor}{suffix}"
+    return str(microseconds)
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,11 +50,14 @@ class TxFeature:
 
     @property
     def name(self) -> str:
-        window = (
-            "total"
-            if self.window_type == "time" and self.window == TOTAL_TIME_WINDOW
-            else str(self.window)
-        )
+        if self.window_type == "time":
+            window = (
+                "total"
+                if self.window == TOTAL_TIME_WINDOW
+                else _format_time_window(self.window)
+            )
+        else:
+            window = str(self.window)
 
         if self.kind in CATEGORY_KINDS:
             if self.category_family is None or self.category_code is None:
