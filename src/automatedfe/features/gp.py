@@ -20,6 +20,7 @@ from geneticengine.representations.tree.treebased import TreeBasedRepresentation
 from geneticengine.solutions.individual import PhenotypicIndividual
 
 from .feature_materialization import FeatureMaterializer
+from .fitness import LogisticRegressionFitness
 from .grammar import (
     AggregationFeature,
     Count,
@@ -43,8 +44,19 @@ def build_search_algorithm(
     csv_path: str | PathLike[str] | None = None,
     mmap_dir: str | PathLike[str],
     feature_output_dir: str | PathLike[str] | None = None,
+    dataset_path: str | PathLike[str] | None = None,
+    validation_fraction: float = 0.2,
+    score_metric: str = "roc_auc",
+    fitness_random_state: int = 42,
 ) -> GeneticProgramming:
-    """Configure the materializing GP search."""
+    """Configure the materializing GP search.
+
+    If *dataset_path* is supplied, each generated feature is evaluated with a
+    fresh logistic-regression fit on the chronological training/validation
+    split defined by :class:`LogisticRegressionFitness`. Leaving it ``None``
+    preserves the zero-fitness configuration used by materialization-only
+    callers and older experiments.
+    """
 
     if population_size <= 0:
         raise ValueError("population_size must be positive")
@@ -57,8 +69,19 @@ def build_search_algorithm(
         # all four aggregation productions remain depth-one trees.
         MaxDepthDecider(random, grammar, max_depth=1),
     )
+    fitness_evaluator = None
+    if dataset_path is not None:
+        fitness_evaluator = LogisticRegressionFitness(
+            materializer,
+            dataset_path,
+            validation_fraction=validation_fraction,
+            score_metric=score_metric,
+            random_state=fitness_random_state,
+        )
     problem = SingleObjectiveProblem(
-        fitness_function=lambda _individual: 0.0,
+        fitness_function=(
+            fitness_evaluator if fitness_evaluator is not None else lambda _individual: 0.0
+        ),
         minimize=False,
     )
     tracker = None
@@ -85,6 +108,7 @@ def build_search_algorithm(
         random=random,
         tracker=tracker,
         materializer=materializer,
+        fitness_evaluator=fitness_evaluator,
     )
 
 
@@ -95,10 +119,13 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
         self,
         *args: object,
         materializer: FeatureMaterializer,
+        fitness_evaluator: LogisticRegressionFitness | None = None,
         **kwargs: object,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.materializer = materializer
+        self.fitness_evaluator = fitness_evaluator
+        self.last_individuals: list[PhenotypicIndividual] = []
 
     def precompute_population(
         self,
@@ -107,6 +134,7 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
     ) -> None:
         """Materialize all already-generated individuals in this generation."""
 
+        self.last_individuals = list(individuals)
         phenotypes = [individual.get_phenotype() for individual in individuals]
         logger.info(
             "Materializing generation %d: %d GP features",
@@ -114,6 +142,8 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
             len(phenotypes),
         )
         self.materializer.materialize_population(phenotypes)
+        if self.fitness_evaluator is not None:
+            self.fitness_evaluator.prepare_population(phenotypes)
 
 
 __all__ = [
