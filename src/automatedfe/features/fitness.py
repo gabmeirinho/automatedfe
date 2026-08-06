@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from os import PathLike
 from pathlib import Path
@@ -16,6 +17,8 @@ from sklearn.model_selection import TimeSeriesSplit
 
 from .feature_materialization import FeatureMaterializer
 from .feature_spec import FeatureSpec
+
+logger = logging.getLogger(__name__)
 
 DATASET_MERCHANT_COLUMN = "merchant_id"
 DATASET_TIMESTAMP_COLUMN = "event_timestamp"
@@ -182,6 +185,13 @@ class LogisticRegressionFitness:
                     roc_auc_score(y_validation, model.predict_proba(x_validation)[:, 1])
                 )
             self.fold_scores.append(score)
+        logger.info(
+            "Split %d/%d %s score=%.4f",
+            len(self.fold_scores),
+            len(self.cv_splits),
+            individual,
+            score,
+        )
 
         self.last_model = self.last_models[-1]
         return float(np.mean(self.fold_scores))
