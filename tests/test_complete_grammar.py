@@ -57,11 +57,11 @@ def test_complete_grammar_contains_transaction_and_arithmetic_branches():
 
 
 def test_transaction_terminals_resolve_to_encoded_feature_names():
-    assert str(MeanAmount(len(TX_ROW_WINDOWS) + 2)) == "feat_mean_amount_time_86400000000"
+    assert str(MeanAmount(len(TX_ROW_WINDOWS) + 2)) == "feat_mean_amount_time_1d"
     assert str(TotalAmount(len(TX_ROW_WINDOWS) + 8)) == (
         "feat_total_amount_amount_time_total"
     )
-    assert str(StdAmount(len(TX_ROW_WINDOWS) + 1)) == "feat_std_amount_time_21600000000"
+    assert str(StdAmount(len(TX_ROW_WINDOWS) + 1)) == "feat_std_amount_time_6h"
     assert str(CountTotal(8)) == "feat_count_total_amount_time_total"
     assert str(CountCategory(0, 0, 0)) == "feat_count_category_status_0_amount_row_5"
     assert str(AvgDailyCount(0)) == "feat_avg_daily_count_amount_days_7"
@@ -81,12 +81,12 @@ def test_category_rate_collects_both_primitive_dependencies_and_is_safe():
     names = {feature.name for feature in dependencies}
 
     assert names == {
-        "feat_count_category_status_0_amount_time_21600000000",
-        "feat_count_total_amount_time_21600000000",
+        "feat_count_category_status_0_amount_time_6h",
+        "feat_count_total_amount_time_6h",
     }
 
     values = {name: np.array([2.0, 0.0, 1.0]) for name in names}
-    values["feat_count_total_amount_time_21600000000"] = np.array([4.0, 0.0, 0.0])
+    values["feat_count_total_amount_time_6h"] = np.array([4.0, 0.0, 0.0])
     np.testing.assert_allclose(rate.evaluate(values), [0.5, 0.0, 0.0])
 
 
