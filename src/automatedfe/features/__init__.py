@@ -22,6 +22,10 @@ from .feature_spec import (
     TotalHistoryWindow,
     Window,
 )
+from .fitness import (
+    FitnessEvaluator,
+    LogisticRegressionFitness,
+)
 from .grammar import (
     AggregationFeature,
     Count,
@@ -70,6 +74,8 @@ __all__ = [
     "Feature",
     "FeatureMaterializer",
     "FeatureSpec",
+    "FitnessEvaluator",
+    "LogisticRegressionFitness",
     "MaterializingGeneticProgramming",
     "Max",
     "Mean",

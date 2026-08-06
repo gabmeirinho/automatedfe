@@ -14,6 +14,7 @@ from .features.feature_materialization import (
     materialize_feature,
     materialize_individual,
 )
+from .fitness import FitnessEvaluator, LogisticRegressionFitness
 from .preprocessing import preprocess
 from .sorting import (
     DEFAULT_CARD_TOKENS_INPUT,
@@ -49,6 +50,8 @@ __all__ = [
     "DUCKDB_MEMORY_LIMIT",
     "PROJECT_ROOT",
     "FeatureMaterializer",
+    "FitnessEvaluator",
+    "LogisticRegressionFitness",
     "column_dtype",
     "encode_transactions",
     "first_sorting_violation",
