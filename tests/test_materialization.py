@@ -255,3 +255,82 @@ def test_feature_materializer_deduplicates_a_population(monkeypatch):
     FeatureMaterializer(columns).materialize_population([spec, spec])
 
     assert calls == 1
+
+
+def test_event_features_are_cached_on_disk_and_reused_across_runs(tmp_path):
+    columns = {
+        "merchant_id": np.array([1, 1, 1, 2, 2], dtype=np.int64),
+        "created_at": np.array([1, 2, 3, 1, 5], dtype=np.int64),
+        "amount": np.array([10.0, 20.0, 30.0, 40.0, 50.0]),
+    }
+    events_merchants = np.array([1, 2], dtype=np.int64)
+    events_timestamps = np.array([4, 6], dtype=np.int64)
+    spec = FeatureSpec(Aggregation.SUM, "amount", RowWindow(2))
+    features_dir = tmp_path / "features"
+
+    first = FeatureMaterializer(columns, features_dir=features_dir)
+    values = first.materialize_for_events(spec, events_merchants, events_timestamps)
+    np.testing.assert_allclose(values, [50.0, 90.0])
+
+    files = {path.name for path in features_dir.iterdir()}
+    assert f"{spec.name}.events.mmap" in files
+    assert f"{spec.name}.events.json" in files
+
+    # A brand-new materializer over the same event set must load from disk
+    # instead of recomputing.
+    second = FeatureMaterializer(columns, features_dir=features_dir)
+    cached = second.materialize_for_events(spec, events_merchants, events_timestamps)
+    np.testing.assert_allclose(cached, [50.0, 90.0])
+
+
+def test_event_feature_disk_cache_invalidates_on_event_set_change(tmp_path):
+    columns = {
+        "merchant_id": np.array([1, 1, 1, 2, 2], dtype=np.int64),
+        "created_at": np.array([1, 2, 3, 1, 5], dtype=np.int64),
+        "amount": np.array([10.0, 20.0, 30.0, 40.0, 50.0]),
+    }
+    spec = FeatureSpec(Aggregation.SUM, "amount", RowWindow(2))
+    features_dir = tmp_path / "features"
+
+    first = FeatureMaterializer(columns, features_dir=features_dir)
+    first_values = first.materialize_for_events(
+        spec,
+        np.array([1, 2], dtype=np.int64),
+        np.array([2, 3], dtype=np.int64),
+    )
+    np.testing.assert_allclose(first_values, [10.0, 40.0])
+
+    # A different event set (same size, different timestamps) must recompute.
+    second = FeatureMaterializer(columns, features_dir=features_dir)
+    second_values = second.materialize_for_events(
+        spec,
+        np.array([1, 2], dtype=np.int64),
+        np.array([10, 11], dtype=np.int64),
+    )
+    np.testing.assert_allclose(second_values, [50.0, 90.0])
+
+    # And the original event set is still correct after the overwrite.
+    third = FeatureMaterializer(columns, features_dir=features_dir)
+    third_values = third.materialize_for_events(
+        spec,
+        np.array([1, 2], dtype=np.int64),
+        np.array([2, 3], dtype=np.int64),
+    )
+    np.testing.assert_allclose(third_values, [10.0, 40.0])
+
+
+def test_event_features_are_not_persisted_without_features_dir(tmp_path):
+    columns = {
+        "merchant_id": np.array([1, 1], dtype=np.int64),
+        "created_at": np.array([1, 2], dtype=np.int64),
+        "amount": np.array([10.0, 20.0]),
+    }
+    spec = FeatureSpec(Aggregation.COUNT, None, RowWindow(2))
+
+    FeatureMaterializer(columns).materialize_for_events(
+        spec,
+        np.array([1], dtype=np.int64),
+        np.array([3], dtype=np.int64),
+    )
+
+    assert list(tmp_path.iterdir()) == []

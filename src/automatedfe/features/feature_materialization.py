@@ -6,13 +6,18 @@ module is the bridge used before GP evaluation: it takes an individual (or a
 the individual's aggregation with the compiled sliding-window kernel.
 
 Derived features are cached by :class:`FeatureMaterializer` for the lifetime
-of a materialization run. If an output directory is configured, the first
-materialization is also written to its own mmap file; later requests for the
-same feature reuse the cached array instead of recomputing or overwriting it.
+of a materialization run. The event-level values consumed by fitness are
+persisted to disk when *features_dir* is configured, so a feature seen in an
+earlier run is loaded from disk instead of recomputed. The optional
+*output_dir* persists the per-transaction (one row per transaction) feature
+arrays; later requests for the same feature reuse the cached array instead
+of recomputing or overwriting it.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from collections.abc import Mapping
 from os import PathLike
@@ -28,6 +33,8 @@ from .kernels import aggregate
 MERCHANT_ID_COLUMN = "merchant_id"
 CREATED_AT_COLUMN = "created_at"
 FEATURE_MMAP_SUFFIX = ".mmap"
+EVENT_FEATURE_MMAP_SUFFIX = ".events.mmap"
+EVENT_FEATURE_METADATA_SUFFIX = ".events.json"
 
 logger = logging.getLogger(__name__)
 
@@ -197,8 +204,14 @@ class FeatureMaterializer:
     transaction mmap manifest. Source columns are opened once when this
     object is constructed. Derived aggregations are retained in a per-run
     cache, keyed by their :class:`FeatureSpec`. Set *output_dir* to persist
-    each derived feature as
-    ``<feature-name>.mmap``; otherwise the result is an in-memory NumPy array.
+    each derived feature as ``<feature-name>.mmap``; otherwise the result is
+    an in-memory NumPy array.
+
+    *features_dir* enables a cross-run, event-level disk cache used by
+    :meth:`materialize_for_events`: each feature is stored as one ``float64``
+    value per event (a few megabytes), keyed by its spec name and validated
+    against the event set checksum. A later run reading the same feature
+    loads it from disk instead of recomputing it.
     """
 
     def __init__(
@@ -206,12 +219,16 @@ class FeatureMaterializer:
         columns: Mapping[str, np.ndarray] | str | PathLike[str] = DEFAULT_MMAP_DIR,
         *,
         output_dir: str | PathLike[str] | None = None,
+        features_dir: str | PathLike[str] | None = None,
     ) -> None:
         if isinstance(columns, Mapping):
             self.columns = columns
         else:
             self.columns = load_mmapped_columns(Path(columns))
         self.output_dir = None if output_dir is None else Path(output_dir).resolve()
+        self.features_dir = (
+            None if features_dir is None else Path(features_dir).resolve()
+        )
         self._cache: dict[FeatureSpec, np.ndarray] = {}
         self._event_cache: dict[
             tuple[FeatureSpec, int, int],
@@ -252,27 +269,114 @@ class FeatureMaterializer:
         for individual in individuals:
             self.materialize(individual)
 
+    @staticmethod
+    def _event_set_checksum(
+        event_merchants: np.ndarray,
+        event_timestamps: np.ndarray,
+    ) -> str:
+        """Return a stable digest identifying the event set and its ordering."""
+
+        digest = hashlib.blake2b(digest_size=16)
+        digest.update(np.ascontiguousarray(event_merchants).view(np.uint8))
+        digest.update(np.ascontiguousarray(event_timestamps).view(np.uint8))
+        return digest.hexdigest()
+
+    def _load_event_feature(
+        self,
+        spec: FeatureSpec,
+        event_merchants: np.ndarray,
+        event_timestamps: np.ndarray,
+    ) -> np.ndarray | None:
+        """Return the persisted event-level feature, or None on any mismatch."""
+
+        if self.features_dir is None:
+            return None
+
+        checksum = self._event_set_checksum(event_merchants, event_timestamps)
+        cache_path = self.features_dir / f"{spec.name}{EVENT_FEATURE_MMAP_SUFFIX}"
+        metadata_path = (
+            self.features_dir / f"{spec.name}{EVENT_FEATURE_METADATA_SUFFIX}"
+        )
+        try:
+            metadata = json.loads(metadata_path.read_text())
+        except (OSError, ValueError):
+            return None
+        if (
+            not isinstance(metadata, dict)
+            or metadata.get("checksum") != checksum
+            or metadata.get("rows") != len(event_timestamps)
+        ):
+            return None
+        try:
+            cached = np.fromfile(cache_path, dtype=np.float64, count=len(event_timestamps))
+        except OSError:
+            return None
+        if cached.size != len(event_timestamps):
+            return None
+        logger.info("Reusing cached event feature from disk: %s", spec.name)
+        return cached
+
+    def _store_event_feature(
+        self,
+        spec: FeatureSpec,
+        event_merchants: np.ndarray,
+        event_timestamps: np.ndarray,
+        values: np.ndarray,
+    ) -> None:
+        """Persist the event-level feature and its event-set checksum."""
+
+        if self.features_dir is None:
+            return
+        self.features_dir.mkdir(parents=True, exist_ok=True)
+        checksum = self._event_set_checksum(event_merchants, event_timestamps)
+        cache_path = self.features_dir / f"{spec.name}{EVENT_FEATURE_MMAP_SUFFIX}"
+        metadata_path = (
+            self.features_dir / f"{spec.name}{EVENT_FEATURE_METADATA_SUFFIX}"
+        )
+        mapped = np.memmap(cache_path, dtype=np.float64, mode="w+", shape=values.shape)
+        mapped[:] = values
+        mapped.flush()
+        metadata_path.write_text(
+            json.dumps({"rows": int(len(values)), "checksum": checksum})
+        )
+
     def materialize_for_events(
         self,
         individual: FeatureSpec | Any,
         event_merchants: np.ndarray,
         event_timestamps: np.ndarray,
     ) -> np.ndarray:
-        """Materialize *individual* and return its value at each event."""
+        """Materialize *individual* and return its value at each event.
+
+        The values are computed directly from the source transaction columns
+        (not from the per-transaction feature arrays). When *features_dir* is
+        configured, results are persisted as one ``float64`` per event and
+        reused across runs whenever the event set matches.
+        """
 
         spec = _feature_spec(individual)
-        self.materialize(spec)
+        event_merchants = np.asarray(event_merchants)
+        event_timestamps = np.asarray(event_timestamps, dtype=np.int64)
         cache_key = (spec, id(event_merchants), id(event_timestamps))
         if cache_key not in self._event_cache:
+            values = self._load_event_feature(
+                spec, event_merchants, event_timestamps
+            )
+            if values is None:
+                logger.info("Materializing event feature: %s", spec.name)
+                values = _materialize_event_feature(
+                    spec,
+                    self.columns,
+                    event_merchants,
+                    event_timestamps,
+                )
+                self._store_event_feature(
+                    spec, event_merchants, event_timestamps, values
+                )
             self._event_cache[cache_key] = (
                 event_merchants,
                 event_timestamps,
-                _materialize_event_feature(
-                    spec,
-                    self.columns,
-                    np.asarray(event_merchants),
-                    np.asarray(event_timestamps, dtype=np.int64),
-                ),
+                values,
             )
         return self._event_cache[cache_key][2]
 
@@ -293,6 +397,8 @@ materialize_aggregation = materialize_feature
 
 __all__ = [
     "CREATED_AT_COLUMN",
+    "EVENT_FEATURE_METADATA_SUFFIX",
+    "EVENT_FEATURE_MMAP_SUFFIX",
     "FEATURE_MMAP_SUFFIX",
     "MERCHANT_ID_COLUMN",
     "FeatureMaterializer",
