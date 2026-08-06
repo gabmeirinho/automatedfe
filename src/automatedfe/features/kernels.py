@@ -7,10 +7,10 @@ an aggregation over the merchant's *preceding* rows that fall inside a window:
 the last ``N`` rows, the last ``T`` microseconds, or the entire history up to
 ``i``. The row itself is always excluded from its own window.
 
-Every kernel runs in linear time with a two-pointer scan: when ``i`` advances,
-the newly entered row is folded into running state and the row that left the
-window is subtracted back out (``sum``/``mean``) or popped off a monotonic
-deque (``max``). Nothing is recomputed from scratch per row.
+The implementations mirror the production kernels in ``gp-benchmarks``:
+row windows use bounded ring buffers, time windows use two-pointer scans, and
+maxima use a dynamically growing monotonic deque.  Nothing is recomputed from
+scratch per row and row-window state is bounded by the requested window size.
 
 Empty windows (the first row of a merchant, or no row within a time window)
 produce ``0`` for ``count`` and ``NaN`` for every value aggregation. Input
@@ -50,152 +50,328 @@ _WINDOW_MODES: dict[str, int] = {
 }
 
 
-@numba.njit(inline="always")
-def _window_left(
+@numba.njit(cache=True, nogil=True)
+def _count_row_kernel(
     merchant_id: np.ndarray,
-    created_at: np.ndarray,
-    i: int,
-    left: int,
-    window_mode: int,
+    result: np.ndarray,
     window_span: int,
-) -> int:
-    """Return the first row included in the window for row *i*."""
+) -> None:
+    """Write counts over the preceding ``window_span`` merchant rows."""
 
-    if i > 0 and merchant_id[i] != merchant_id[i - 1]:
-        return i
-
-    if window_mode == ROW_WINDOW:
-        while i - left > window_span:
-            left += 1
-    elif window_mode == TIME_WINDOW:
-        while left < i and created_at[i] - created_at[left] > window_span:
-            left += 1
-    return left
+    merchant_start = 0
+    for i in range(merchant_id.shape[0]):
+        if i == 0 or merchant_id[i] != merchant_id[i - 1]:
+            merchant_start = i
+        result[i] = float(i - max(merchant_start, i - window_span))
 
 
 @numba.njit(cache=True, nogil=True)
-def _count_kernel(
+def _count_time_kernel(
     merchant_id: np.ndarray,
     created_at: np.ndarray,
     result: np.ndarray,
-    window_mode: int,
     window_span: int,
 ) -> None:
-    """Write trailing transaction counts into *result*."""
+    """Write counts over the preceding timestamp window."""
 
     left = 0
     for i in range(merchant_id.shape[0]):
-        left = _window_left(
-            merchant_id, created_at, i, left, window_mode, window_span
-        )
+        if i == 0 or merchant_id[i] != merchant_id[i - 1]:
+            left = i
+        min_timestamp = created_at[i] - window_span
+        while left < i and created_at[left] < min_timestamp:
+            left += 1
         result[i] = float(i - left)
 
 
 @numba.njit(cache=True, nogil=True)
-def _sum_kernel(
-    merchant_id: np.ndarray,
-    values: np.ndarray,
-    created_at: np.ndarray,
-    result: np.ndarray,
-    window_mode: int,
-    window_span: int,
-) -> None:
-    """Write trailing sums into *result*."""
+def _count_total_kernel(merchant_id: np.ndarray, result: np.ndarray) -> None:
+    """Write counts over all preceding merchant rows."""
 
-    left = 0
-    total = 0.0
-
+    merchant_start = 0
     for i in range(merchant_id.shape[0]):
-        new_left = _window_left(
-            merchant_id, created_at, i, left, window_mode, window_span
-        )
-        new_merchant = i > 0 and merchant_id[i] != merchant_id[i - 1]
-        if new_merchant:
-            total = 0.0
-        else:
-            while left < new_left:
-                total -= values[left]
-                left += 1
-        left = new_left
-
-        count = i - left
-        result[i] = total if count > 0 else math.nan
-        total += values[i]
+        if i == 0 or merchant_id[i] != merchant_id[i - 1]:
+            merchant_start = i
+        result[i] = float(i - merchant_start)
 
 
 @numba.njit(cache=True, nogil=True)
-def _mean_kernel(
+def _sum_row_kernel(
     merchant_id: np.ndarray,
     values: np.ndarray,
-    created_at: np.ndarray,
     result: np.ndarray,
-    window_mode: int,
     window_span: int,
 ) -> None:
-    """Write trailing means into *result*."""
+    """Write sums from a bounded row-window ring buffer."""
 
-    left = 0
+    ring = np.empty(window_span, dtype=np.float64)
+    ring_start = 0
+    ring_count = 0
     total = 0.0
-
     for i in range(merchant_id.shape[0]):
-        new_left = _window_left(
-            merchant_id, created_at, i, left, window_mode, window_span
-        )
-        new_merchant = i > 0 and merchant_id[i] != merchant_id[i - 1]
-        if new_merchant:
+        if i == 0 or merchant_id[i] != merchant_id[i - 1]:
+            ring_start = 0
+            ring_count = 0
             total = 0.0
-        else:
-            while left < new_left:
-                total -= values[left]
-                left += 1
-        left = new_left
 
-        count = i - left
-        result[i] = total / count if count > 0 else math.nan
-        total += values[i]
-
-
-@numba.njit(cache=True, nogil=True)
-def _max_kernel(
-    merchant_id: np.ndarray,
-    values: np.ndarray,
-    created_at: np.ndarray,
-    result: np.ndarray,
-    window_mode: int,
-    window_span: int,
-) -> None:
-    """Write trailing maxima into *result* using a monotonic deque."""
-
-    n = merchant_id.shape[0]
-    deque_indices = np.empty(n, dtype=np.int64)
-    deque_head = 0
-    deque_tail = 0
-    left = 0
-
-    for i in range(n):
-        new_left = _window_left(
-            merchant_id, created_at, i, left, window_mode, window_span
-        )
-        new_merchant = i > 0 and merchant_id[i] != merchant_id[i - 1]
-        if new_merchant:
-            left = i
-            deque_head = 0
-            deque_tail = 0
-        else:
-            while left < new_left:
-                if deque_head < deque_tail and deque_indices[deque_head] == left:
-                    deque_head += 1
-                left += 1
-
-        left = new_left
-        count = i - left
-        result[i] = values[deque_indices[deque_head]] if count > 0 else math.nan
+        result[i] = total if ring_count > 0 else math.nan
 
         value = values[i]
-        while deque_tail > deque_head and values[deque_indices[deque_tail - 1]] <= value:
-            deque_tail -= 1
-        deque_indices[deque_tail] = i
-        deque_tail += 1
+        if ring_count < window_span:
+            ring[(ring_start + ring_count) % window_span] = value
+            ring_count += 1
+        else:
+            total -= ring[ring_start]
+            ring[ring_start] = value
+            ring_start = (ring_start + 1) % window_span
+        total += value
+
+
+@numba.njit(cache=True, nogil=True)
+def _sum_time_kernel(
+    merchant_id: np.ndarray,
+    values: np.ndarray,
+    created_at: np.ndarray,
+    result: np.ndarray,
+    window_span: int,
+) -> None:
+    """Write sums from a two-pointer timestamp window."""
+
+    left = 0
+    count = 0
+    total = 0.0
+    for i in range(merchant_id.shape[0]):
+        if i == 0 or merchant_id[i] != merchant_id[i - 1]:
+            left = i
+            count = 0
+            total = 0.0
+
+        min_timestamp = created_at[i] - window_span
+        while left < i and created_at[left] < min_timestamp:
+            total -= values[left]
+            count -= 1
+            left += 1
+
+        result[i] = total if count > 0 else math.nan
+        total += values[i]
+        count += 1
+
+
+@numba.njit(cache=True, nogil=True)
+def _sum_total_kernel(
+    merchant_id: np.ndarray,
+    values: np.ndarray,
+    result: np.ndarray,
+) -> None:
+    """Write sums over all preceding merchant rows."""
+
+    count = 0
+    total = 0.0
+    for i in range(merchant_id.shape[0]):
+        if i == 0 or merchant_id[i] != merchant_id[i - 1]:
+            count = 0
+            total = 0.0
+        result[i] = total if count > 0 else math.nan
+        total += values[i]
+        count += 1
+
+
+@numba.njit(cache=True, nogil=True)
+def _mean_row_kernel(
+    merchant_id: np.ndarray,
+    values: np.ndarray,
+    result: np.ndarray,
+    window_span: int,
+) -> None:
+    """Write means from a bounded row-window ring buffer."""
+
+    ring = np.empty(window_span, dtype=np.float64)
+    ring_start = 0
+    ring_count = 0
+    total = 0.0
+    for i in range(merchant_id.shape[0]):
+        if i == 0 or merchant_id[i] != merchant_id[i - 1]:
+            ring_start = 0
+            ring_count = 0
+            total = 0.0
+
+        result[i] = total / ring_count if ring_count > 0 else math.nan
+
+        value = values[i]
+        if ring_count < window_span:
+            ring[(ring_start + ring_count) % window_span] = value
+            ring_count += 1
+        else:
+            total -= ring[ring_start]
+            ring[ring_start] = value
+            ring_start = (ring_start + 1) % window_span
+        total += value
+
+
+@numba.njit(cache=True, nogil=True)
+def _mean_time_kernel(
+    merchant_id: np.ndarray,
+    values: np.ndarray,
+    created_at: np.ndarray,
+    result: np.ndarray,
+    window_span: int,
+) -> None:
+    """Write means from a two-pointer timestamp window."""
+
+    left = 0
+    count = 0
+    total = 0.0
+    for i in range(merchant_id.shape[0]):
+        if i == 0 or merchant_id[i] != merchant_id[i - 1]:
+            left = i
+            count = 0
+            total = 0.0
+
+        min_timestamp = created_at[i] - window_span
+        while left < i and created_at[left] < min_timestamp:
+            total -= values[left]
+            count -= 1
+            left += 1
+
+        result[i] = total / count if count > 0 else math.nan
+        total += values[i]
+        count += 1
+
+
+@numba.njit(cache=True, nogil=True)
+def _mean_total_kernel(
+    merchant_id: np.ndarray,
+    values: np.ndarray,
+    result: np.ndarray,
+) -> None:
+    """Write means over all preceding merchant rows."""
+
+    count = 0
+    total = 0.0
+    for i in range(merchant_id.shape[0]):
+        if i == 0 or merchant_id[i] != merchant_id[i - 1]:
+            count = 0
+            total = 0.0
+        result[i] = total / count if count > 0 else math.nan
+        total += values[i]
+        count += 1
+
+
+@numba.njit(inline="always")
+def _append_maximum(
+    deque_indices: np.ndarray,
+    head: int,
+    tail: int,
+    capacity: int,
+    values: np.ndarray,
+    index: int,
+) -> tuple[np.ndarray, int, int, int]:
+    """Append one row to a compacting, dynamically growing monotonic deque."""
+
+    if tail >= capacity:
+        if head > 0:
+            size = tail - head
+            for j in range(size):
+                deque_indices[j] = deque_indices[head + j]
+            head = 0
+            tail = size
+        else:
+            new_capacity = capacity * 2
+            new_deque = np.empty(new_capacity, dtype=np.int64)
+            for j in range(tail):
+                new_deque[j] = deque_indices[j]
+            deque_indices = new_deque
+            capacity = new_capacity
+
+    value = values[index]
+    while tail > head and values[deque_indices[tail - 1]] <= value:
+        tail -= 1
+    deque_indices[tail] = index
+    return deque_indices, head, tail + 1, capacity
+
+
+@numba.njit(cache=True, nogil=True)
+def _max_row_kernel(
+    merchant_id: np.ndarray,
+    values: np.ndarray,
+    result: np.ndarray,
+    window_span: int,
+) -> None:
+    """Write row-window maxima using a monotonic deque."""
+
+    capacity = 1024
+    deque_indices = np.empty(capacity, dtype=np.int64)
+    head = 0
+    tail = 0
+    merchant_start = 0
+    for i in range(merchant_id.shape[0]):
+        if i == 0 or merchant_id[i] != merchant_id[i - 1]:
+            merchant_start = i
+            head = 0
+            tail = 0
+
+        left = max(merchant_start, i - window_span)
+        while head < tail and deque_indices[head] < left:
+            head += 1
+        result[i] = values[deque_indices[head]] if head < tail else math.nan
+        deque_indices, head, tail, capacity = _append_maximum(
+            deque_indices, head, tail, capacity, values, i
+        )
+
+
+@numba.njit(cache=True, nogil=True)
+def _max_time_kernel(
+    merchant_id: np.ndarray,
+    values: np.ndarray,
+    created_at: np.ndarray,
+    result: np.ndarray,
+    window_span: int,
+) -> None:
+    """Write timestamp-window maxima using a monotonic deque."""
+
+    capacity = 1024
+    deque_indices = np.empty(capacity, dtype=np.int64)
+    head = 0
+    tail = 0
+    left = 0
+    for i in range(merchant_id.shape[0]):
+        if i == 0 or merchant_id[i] != merchant_id[i - 1]:
+            left = i
+            head = 0
+            tail = 0
+
+        min_timestamp = created_at[i] - window_span
+        while left < i and created_at[left] < min_timestamp:
+            left += 1
+        while head < tail and deque_indices[head] < left:
+            head += 1
+
+        result[i] = values[deque_indices[head]] if head < tail else math.nan
+        deque_indices, head, tail, capacity = _append_maximum(
+            deque_indices, head, tail, capacity, values, i
+        )
+
+
+@numba.njit(cache=True, nogil=True)
+def _max_total_kernel(
+    merchant_id: np.ndarray,
+    values: np.ndarray,
+    result: np.ndarray,
+) -> None:
+    """Write maxima over all preceding merchant rows."""
+
+    capacity = 1024
+    deque_indices = np.empty(capacity, dtype=np.int64)
+    head = 0
+    tail = 0
+    for i in range(merchant_id.shape[0]):
+        if i == 0 or merchant_id[i] != merchant_id[i - 1]:
+            head = 0
+            tail = 0
+        result[i] = values[deque_indices[head]] if head < tail else math.nan
+        deque_indices, head, tail, capacity = _append_maximum(
+            deque_indices, head, tail, capacity, values, i
+        )
 
 
 def _resolve_aggregation(aggregation: str | Aggregation) -> int:
@@ -286,16 +462,47 @@ def sliding_window(
         )
 
     result = np.empty(merchant_id.shape[0], dtype=np.float64)
-    if aggregation_code == COUNT:
-        _count_kernel(merchant_id, timestamps, result, mode_code, window_span)
-    elif aggregation_code == SUM:
-        _sum_kernel(merchant_id, values, timestamps, result, mode_code, window_span)
-    elif aggregation_code == MEAN:
-        _mean_kernel(merchant_id, values, timestamps, result, mode_code, window_span)
-    elif aggregation_code == MAX:
-        _max_kernel(merchant_id, values, timestamps, result, mode_code, window_span)
+    if mode_code == ROW_WINDOW:
+        if aggregation_code == COUNT:
+            _count_row_kernel(merchant_id, result, window_span)
+        elif aggregation_code == SUM:
+            _sum_row_kernel(merchant_id, values, result, window_span)
+        elif aggregation_code == MEAN:
+            _mean_row_kernel(merchant_id, values, result, window_span)
+        elif aggregation_code == MAX:
+            _max_row_kernel(merchant_id, values, result, window_span)
+        else:
+            raise RuntimeError(f"Unsupported aggregation code: {aggregation_code}")
+    elif mode_code == TIME_WINDOW:
+        if aggregation_code == COUNT:
+            _count_time_kernel(merchant_id, timestamps, result, window_span)
+        elif aggregation_code == SUM:
+            _sum_time_kernel(
+                merchant_id, values, timestamps, result, window_span
+            )
+        elif aggregation_code == MEAN:
+            _mean_time_kernel(
+                merchant_id, values, timestamps, result, window_span
+            )
+        elif aggregation_code == MAX:
+            _max_time_kernel(
+                merchant_id, values, timestamps, result, window_span
+            )
+        else:
+            raise RuntimeError(f"Unsupported aggregation code: {aggregation_code}")
+    elif mode_code == TOTAL_HISTORY:
+        if aggregation_code == COUNT:
+            _count_total_kernel(merchant_id, result)
+        elif aggregation_code == SUM:
+            _sum_total_kernel(merchant_id, values, result)
+        elif aggregation_code == MEAN:
+            _mean_total_kernel(merchant_id, values, result)
+        elif aggregation_code == MAX:
+            _max_total_kernel(merchant_id, values, result)
+        else:
+            raise RuntimeError(f"Unsupported aggregation code: {aggregation_code}")
     else:
-        raise RuntimeError(f"Unsupported aggregation code: {aggregation_code}")
+        raise RuntimeError(f"Unsupported window mode code: {mode_code}")
     return result
 
 
