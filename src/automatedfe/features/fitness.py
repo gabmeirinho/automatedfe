@@ -13,8 +13,8 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 
-from .feature_materialization import FeatureMaterializer, _feature_spec
-from .feature_spec import FeatureSpec, RowWindow, TimeWindow
+from .feature_materialization import FeatureMaterializer
+from .feature_spec import FeatureSpec
 
 DATASET_MERCHANT_COLUMN = "merchant_id"
 DATASET_TIMESTAMP_COLUMN = "event_timestamp"
@@ -56,70 +56,6 @@ def _load_ordered_events(dataset_path: str | PathLike[str]) -> tuple[np.ndarray,
     return merchants, timestamps, labels
 
 
-def _event_values(
-    spec: FeatureSpec,
-    columns: dict[str, np.ndarray],
-    event_merchants: np.ndarray,
-    event_timestamps: np.ndarray,
-) -> np.ndarray:
-    """Calculate a candidate at each event from the preceding transactions."""
-
-    transaction_merchants = np.asarray(columns[DATASET_MERCHANT_COLUMN])
-    transaction_timestamps = np.asarray(columns["created_at"], dtype=np.int64)
-    amounts = None if spec.input_column is None else np.asarray(columns[spec.input_column])
-    result = np.full(len(event_timestamps), np.nan, dtype=np.float64)
-
-    # The source mmaps are ordered by merchant and timestamp. Grouping events by
-    # merchant lets searchsorted identify each event's causal history directly.
-    order = np.argsort(event_merchants, kind="stable")
-    for event_indices in np.split(
-        order,
-        np.flatnonzero(event_merchants[order][1:] != event_merchants[order][:-1]) + 1,
-    ):
-        merchant = event_merchants[event_indices[0]]
-        start = np.searchsorted(transaction_merchants, merchant, side="left")
-        stop = np.searchsorted(transaction_merchants, merchant, side="right")
-        if start == stop:
-            if spec.input_column is None:
-                result[event_indices] = 0.0
-            continue
-
-        timestamps = transaction_timestamps[start:stop]
-        right = np.searchsorted(timestamps, event_timestamps[event_indices], side="left")
-        if isinstance(spec.window, RowWindow):
-            left = np.maximum(0, right - spec.window.rows)
-        elif isinstance(spec.window, TimeWindow):
-            left = np.searchsorted(
-                timestamps,
-                event_timestamps[event_indices] - spec.window.microseconds,
-                side="left",
-            )
-        else:
-            left = np.zeros_like(right)
-
-        counts = right - left
-        if spec.input_column is None:
-            result[event_indices] = counts
-            continue
-
-        values = np.nan_to_num(amounts[start:stop])
-        if spec.aggregation.value in {"sum", "mean"}:
-            prefix = np.concatenate(([0.0], np.cumsum(values, dtype=np.float64)))
-            totals = prefix[right] - prefix[left]
-            non_empty = counts > 0
-            result[event_indices[non_empty]] = totals[non_empty]
-            if spec.aggregation.value == "mean":
-                result[event_indices[non_empty]] /= counts[non_empty]
-        elif spec.aggregation.value == "max":
-            for index, window_start, window_stop in zip(event_indices, left, right):
-                if window_start < window_stop:
-                    result[index] = np.max(values[window_start:window_stop])
-        else:
-            raise ValueError(f"Unsupported aggregation: {spec.aggregation.value}")
-
-    return result
-
-
 class LogisticRegressionFitness:
     """Materialize one feature, fit on train, and score on validation."""
 
@@ -147,7 +83,6 @@ class LogisticRegressionFitness:
         self.event_merchants, self.event_timestamps, self.labels = _load_ordered_events(
             self.dataset_path
         )
-        self._feature_cache: dict[FeatureSpec, np.ndarray] = {}
         self.last_model: LogisticRegression | None = None
 
         validation_rows = max(1, int(np.ceil(len(self.labels) * validation_fraction)))
@@ -158,18 +93,11 @@ class LogisticRegressionFitness:
             raise ValueError("Chronological fit rows must contain at least two target classes")
 
     def _values_for(self, individual: FeatureSpec | Any) -> np.ndarray:
-        spec = _feature_spec(individual)
-        if spec not in self._feature_cache:
-            # Materialize the candidate mmap first. Fitness only constructs the
-            # event-level view needed by the model.
-            self.materializer.materialize(spec)
-            self._feature_cache[spec] = _event_values(
-                spec,
-                self.materializer.columns,
-                self.event_merchants,
-                self.event_timestamps,
-            )
-        return self._feature_cache[spec]
+        return self.materializer.materialize_for_events(
+            individual,
+            self.event_merchants,
+            self.event_timestamps,
+        )
 
     def prepare_population(self, individuals: Sequence[FeatureSpec | Any]) -> None:
         """Calculate and cache every feature before population evaluation."""

@@ -22,7 +22,7 @@ from typing import Any
 import numpy as np
 
 from ..transaction_materialization import DEFAULT_MMAP_DIR, load_mmapped_columns
-from .feature_spec import FeatureSpec, TimeWindow
+from .feature_spec import FeatureSpec, RowWindow, TimeWindow
 from .kernels import aggregate
 
 MERCHANT_ID_COLUMN = "merchant_id"
@@ -123,6 +123,73 @@ def materialize_feature(
     return mapped
 
 
+def _materialize_event_feature(
+    spec: FeatureSpec,
+    columns: Mapping[str, np.ndarray],
+    event_merchants: np.ndarray,
+    event_timestamps: np.ndarray,
+) -> np.ndarray:
+    """Calculate a transaction-history feature at each event timestamp."""
+
+    transaction_merchants = np.asarray(columns[MERCHANT_ID_COLUMN])
+    transaction_timestamps = np.asarray(columns[CREATED_AT_COLUMN], dtype=np.int64)
+    values = None if spec.input_column is None else np.asarray(columns[spec.input_column])
+    result = np.full(len(event_timestamps), np.nan, dtype=np.float64)
+
+    order = np.argsort(event_merchants, kind="stable")
+    boundaries = np.flatnonzero(
+        event_merchants[order][1:] != event_merchants[order][:-1]
+    ) + 1
+    for event_indices in np.split(order, boundaries):
+        merchant = event_merchants[event_indices[0]]
+        start = np.searchsorted(transaction_merchants, merchant, side="left")
+        stop = np.searchsorted(transaction_merchants, merchant, side="right")
+        if start == stop:
+            if spec.input_column is None:
+                result[event_indices] = 0.0
+            continue
+
+        timestamps = transaction_timestamps[start:stop]
+        event_times = event_timestamps[event_indices]
+        right = np.searchsorted(timestamps, event_times, side="left")
+        if isinstance(spec.window, RowWindow):
+            left = np.maximum(0, right - spec.window.rows)
+        elif isinstance(spec.window, TimeWindow):
+            left = np.searchsorted(
+                timestamps,
+                event_times - spec.window.microseconds,
+                side="left",
+            )
+        else:
+            left = np.zeros_like(right)
+
+        counts = right - left
+        if spec.input_column is None:
+            result[event_indices] = counts
+            continue
+
+        merchant_values = np.nan_to_num(values[start:stop])
+        if spec.aggregation.value in {"sum", "mean"}:
+            prefix = np.concatenate(
+                ([0.0], np.cumsum(merchant_values, dtype=np.float64))
+            )
+            totals = prefix[right] - prefix[left]
+            non_empty = counts > 0
+            result[event_indices[non_empty]] = totals[non_empty]
+            if spec.aggregation.value == "mean":
+                result[event_indices[non_empty]] /= counts[non_empty]
+        elif spec.aggregation.value == "max":
+            for index, window_start, window_stop in zip(event_indices, left, right):
+                if window_start < window_stop:
+                    result[index] = np.max(
+                        merchant_values[window_start:window_stop]
+                    )
+        else:
+            raise ValueError(f"Unsupported aggregation: {spec.aggregation.value}")
+
+    return result
+
+
 class FeatureMaterializer:
     """Materialize GP individuals from already materialized source columns.
 
@@ -146,6 +213,10 @@ class FeatureMaterializer:
             self.columns = load_mmapped_columns(Path(columns))
         self.output_dir = None if output_dir is None else Path(output_dir).resolve()
         self._cache: dict[FeatureSpec, np.ndarray] = {}
+        self._event_cache: dict[
+            tuple[FeatureSpec, int, int],
+            tuple[np.ndarray, np.ndarray, np.ndarray],
+        ] = {}
 
     def materialize(self, individual: FeatureSpec | Any) -> np.ndarray:
         """Materialize one GP individual, reusing a feature seen in this run."""
@@ -180,6 +251,30 @@ class FeatureMaterializer:
 
         for individual in individuals:
             self.materialize(individual)
+
+    def materialize_for_events(
+        self,
+        individual: FeatureSpec | Any,
+        event_merchants: np.ndarray,
+        event_timestamps: np.ndarray,
+    ) -> np.ndarray:
+        """Materialize *individual* and return its value at each event."""
+
+        spec = _feature_spec(individual)
+        self.materialize(spec)
+        cache_key = (spec, id(event_merchants), id(event_timestamps))
+        if cache_key not in self._event_cache:
+            self._event_cache[cache_key] = (
+                event_merchants,
+                event_timestamps,
+                _materialize_event_feature(
+                    spec,
+                    self.columns,
+                    np.asarray(event_merchants),
+                    np.asarray(event_timestamps, dtype=np.int64),
+                ),
+            )
+        return self._event_cache[cache_key][2]
 
 
 def materialize_individual(
