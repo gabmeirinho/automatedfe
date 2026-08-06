@@ -34,6 +34,7 @@ from .feature_spec import (
     Window,
 )
 from .feature_types import TxFeature
+from .final_evaluation import FinalEvaluationResult, FinalEvaluator, TEST_SPLIT
 from .fitness import FitnessEvaluator, LogisticRegressionFitness
 from .grammar import (
     Add,
@@ -105,6 +106,8 @@ __all__ = [
     "FEATURE_MMAP_SUFFIX",
     "FAMILIES",
     "FeatureMaterializer",
+    "FinalEvaluationResult",
+    "FinalEvaluator",
     "FitnessEvaluator",
     "Log",
     "LogisticRegressionFitness",
@@ -124,6 +127,7 @@ __all__ = [
     "Sub",
     "SUM",
     "TERMINALS",
+    "TEST_SPLIT",
     "TIME_WINDOW",
     "TIME_WINDOWS",
     "TOTAL_HISTORY",
