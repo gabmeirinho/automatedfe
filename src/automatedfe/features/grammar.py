@@ -10,8 +10,6 @@ This module contains the full expression grammar used by ``gp-benchmarks``:
 The complete grammar is intentionally independent of feature materialization.
 Its leaves resolve to immutable :class:`TxFeature` descriptors, which can
 later be materialized by the appropriate backend.
-The smaller :func:`build_transaction_grammar` remains available for the
-currently implemented sliding-window kernels.
 """
 
 from __future__ import annotations
@@ -28,21 +26,13 @@ from geneticengine.grammar import extract_grammar
 from geneticengine.grammar.decorators import abstract
 from geneticengine.grammar.metahandlers.dependent import Dependent
 from geneticengine.grammar.metahandlers.ints import IntRange
-from geneticengine.grammar.metahandlers.vars import VarRange
 
 from .feature_schema import (
     FAMILIES,
     TX_DAYS_WINDOWS,
-    TX_ROW_WINDOWS,
     TX_TIME_WINDOWS,
-    WINDOW_TYPE,
+    TX_WINDOWS,
     code_lists_from_mapping,
-)
-from .feature_spec import (
-    AMOUNT_COLUMN,
-    WINDOW_CATALOG,
-    Aggregation,
-    FeatureSpec,
 )
 from .feature_types import TxFeature
 
@@ -180,8 +170,37 @@ class Agg(expr, ABC):
 
 
 @abstract
+@dataclass
 class AmountAgg(Agg, ABC):
     """Abstract transaction amount aggregate."""
+
+    kind: ClassVar[str]
+    window_i: Annotated[int, IntRange(0, len(TX_WINDOWS) - 1)]
+
+    def to_feature_spec(self) -> TxFeature:
+        window_type, window = TX_WINDOWS[self.window_i]
+        return TxFeature(kind=self.kind, input_col="amount", window=window, window_type=window_type)
+
+
+@dataclass
+class MeanAmount(AmountAgg):
+    kind = "mean"
+
+
+@dataclass
+class MaxAmount(AmountAgg):
+    kind = "max"
+
+
+def _resolve_category(category_family_i: int, category_code_i: int):
+    code_lists = _get_code_lists()
+    family = FAMILIES[category_family_i]
+    code = code_lists[category_family_i][category_code_i]
+    return family, code
+
+
+def _category_code_range(category_family_i: int):
+    return IntRange(0, len(_get_code_lists()[category_family_i]) - 1)
 
 
 @abstract
@@ -197,53 +216,6 @@ class RateAgg(Agg, ABC):
 @abstract
 class CountAgg(Agg, ABC):
     """Abstract transaction count aggregate."""
-
-
-def _resolve_window(window_type_i: int, row_window_i: int, time_window_i: int):
-    window_type = WINDOW_TYPE[window_type_i]
-    window = (
-        TX_ROW_WINDOWS[row_window_i]
-        if window_type == "row"
-        else TX_TIME_WINDOWS[time_window_i]
-    )
-    return window_type, window
-
-
-def _resolve_category(category_family_i: int, category_code_i: int):
-    code_lists = _get_code_lists()
-    family = FAMILIES[category_family_i]
-    code = code_lists[category_family_i][category_code_i]
-    return family, code
-
-
-def _category_code_range(category_family_i: int):
-    return IntRange(0, len(_get_code_lists()[category_family_i]) - 1)
-
-
-@dataclass
-class MeanAmount(AmountAgg):
-    window_type_i: Annotated[int, IntRange(0, len(WINDOW_TYPE) - 1)]
-    row_window_i: Annotated[int, IntRange(0, len(TX_ROW_WINDOWS) - 1)]
-    time_window_i: Annotated[int, IntRange(0, len(TX_TIME_WINDOWS) - 1)]
-
-    def to_feature_spec(self) -> TxFeature:
-        window_type, window = _resolve_window(
-            self.window_type_i, self.row_window_i, self.time_window_i
-        )
-        return TxFeature(kind="mean", input_col="amount", window=window, window_type=window_type)
-
-
-@dataclass
-class MaxAmount(AmountAgg):
-    window_type_i: Annotated[int, IntRange(0, len(WINDOW_TYPE) - 1)]
-    row_window_i: Annotated[int, IntRange(0, len(TX_ROW_WINDOWS) - 1)]
-    time_window_i: Annotated[int, IntRange(0, len(TX_TIME_WINDOWS) - 1)]
-
-    def to_feature_spec(self) -> TxFeature:
-        window_type, window = _resolve_window(
-            self.window_type_i, self.row_window_i, self.time_window_i
-        )
-        return TxFeature(kind="max", input_col="amount", window=window, window_type=window_type)
 
 
 @dataclass
@@ -263,14 +235,10 @@ class CountTotal(CountAgg):
 class CountCategory(CountAgg):
     category_family_i: Annotated[int, IntRange(0, len(FAMILIES) - 1)]
     category_code_i: Annotated[int, Dependent("category_family_i", _category_code_range)]
-    window_type_i: Annotated[int, IntRange(0, len(WINDOW_TYPE) - 1)]
-    row_window_i: Annotated[int, IntRange(0, len(TX_ROW_WINDOWS) - 1)]
-    time_window_i: Annotated[int, IntRange(0, len(TX_TIME_WINDOWS) - 1)]
+    window_i: Annotated[int, IntRange(0, len(TX_WINDOWS) - 1)]
 
     def to_feature_spec(self) -> TxFeature:
-        window_type, window = _resolve_window(
-            self.window_type_i, self.row_window_i, self.time_window_i
-        )
+        window_type, window = TX_WINDOWS[self.window_i]
         family_i = self.category_family_i
         code_lists = _get_code_lists()
         return TxFeature(
@@ -316,28 +284,12 @@ class AvgDailyCountCategory(DailyAgg):
 
 @dataclass
 class TotalAmount(AmountAgg):
-    window_type_i: Annotated[int, IntRange(0, len(WINDOW_TYPE) - 1)]
-    row_window_i: Annotated[int, IntRange(0, len(TX_ROW_WINDOWS) - 1)]
-    time_window_i: Annotated[int, IntRange(0, len(TX_TIME_WINDOWS) - 1)]
-
-    def to_feature_spec(self) -> TxFeature:
-        window_type, window = _resolve_window(
-            self.window_type_i, self.row_window_i, self.time_window_i
-        )
-        return TxFeature(kind="total_amount", input_col="amount", window=window, window_type=window_type)
+    kind = "total_amount"
 
 
 @dataclass
 class StdAmount(AmountAgg):
-    window_type_i: Annotated[int, IntRange(0, len(WINDOW_TYPE) - 1)]
-    row_window_i: Annotated[int, IntRange(0, len(TX_ROW_WINDOWS) - 1)]
-    time_window_i: Annotated[int, IntRange(0, len(TX_TIME_WINDOWS) - 1)]
-
-    def to_feature_spec(self) -> TxFeature:
-        window_type, window = _resolve_window(
-            self.window_type_i, self.row_window_i, self.time_window_i
-        )
-        return TxFeature(kind="std", input_col="amount", window=window, window_type=window_type)
+    kind = "std"
 
 
 @dataclass
@@ -469,68 +421,6 @@ def build_grammar(
     return extract_grammar([*TERMINALS, *NON_TERMINALS], expr)
 
 
-# The original refactor's first GP implementation only supports the four
-# sliding-window aggregation nodes. Keep that grammar available while the
-# additional transaction-category materializers are ported.
-Feature = Annotated[str, VarRange([AMOUNT_COLUMN])]
-WindowIndex = Annotated[int, IntRange(0, len(WINDOW_CATALOG) - 1)]
-
-
-@abstract
-class AggregationFeature:
-    """Abstract root for the currently supported basic transaction grammar."""
-
-    aggregation: ClassVar[Aggregation]
-
-    @property
-    def selected_window(self):
-        return WINDOW_CATALOG[self.window]
-
-    def to_feature_spec(self) -> FeatureSpec:
-        input_column = None if self.aggregation is Aggregation.COUNT else self.feature
-        return FeatureSpec(self.aggregation, input_column, self.selected_window)
-
-    def __str__(self) -> str:
-        return self.to_feature_spec().name
-
-
-@dataclass
-class Count(AggregationFeature):
-    aggregation = Aggregation.COUNT
-    window: WindowIndex
-
-    @property
-    def feature(self) -> None:
-        return None
-
-
-@dataclass
-class Sum(AggregationFeature):
-    aggregation = Aggregation.SUM
-    feature: Feature
-    window: WindowIndex
-
-
-@dataclass
-class Mean(AggregationFeature):
-    aggregation = Aggregation.MEAN
-    feature: Feature
-    window: WindowIndex
-
-
-@dataclass
-class Max(AggregationFeature):
-    aggregation = Aggregation.MAX
-    feature: Feature
-    window: WindowIndex
-
-
-def build_transaction_grammar():
-    """Build the four-node grammar supported by the current kernels."""
-
-    return extract_grammar([Count, Sum, Mean, Max], AggregationFeature)
-
-
 def count_nodes(node: expr) -> int:
     """Return the number of nodes in a complete-grammar expression."""
 
@@ -558,7 +448,6 @@ def tree_depth(node: expr) -> int:
 __all__ = [
     "Add",
     "Agg",
-    "AggregationFeature",
     "AmountAgg",
     "ArithmeticOp",
     "AvgDailyAmount",
@@ -567,14 +456,11 @@ __all__ = [
     "AvgDailyCountCategory",
     "AvgDailyTotalAmount",
     "CategoryRate",
-    "Count",
     "CountAgg",
     "CountCategory",
     "CountTotal",
     "DailyAgg",
-    "Feature",
     "Log",
-    "Max",
     "MaxAmount",
     "MeanAmount",
     "Mul",
@@ -585,9 +471,7 @@ __all__ = [
     "Sub",
     "TERMINALS",
     "TotalAmount",
-    "WindowIndex",
     "build_grammar",
-    "build_transaction_grammar",
     "collect_features",
     "code_lists_from_mapping",
     "count_nodes",

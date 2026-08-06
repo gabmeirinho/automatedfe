@@ -516,7 +516,7 @@ def aggregate(
     """Compute *aggregation* over *window* for every transaction row.
 
     Convenience wrapper around :func:`sliding_window` accepting the
-    :class:`~automatedfe.features.FeatureSpec` window and aggregation types.
+    window and aggregation value objects used by :class:`TxFeature`.
     ``Aggregation.COUNT`` ignores *values*; the other aggregations require the
     ``"amount"`` column in *values*. *timestamps* is only used for
     :class:`~automatedfe.features.TimeWindow` windows.

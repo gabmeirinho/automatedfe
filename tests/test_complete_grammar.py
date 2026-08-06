@@ -20,6 +20,7 @@ from automatedfe.features import (
     SafeDiv,
     StdAmount,
     Sub,
+    TX_ROW_WINDOWS,
     TotalAmount,
     build_grammar,
     collect_features,
@@ -56,13 +57,13 @@ def test_complete_grammar_contains_transaction_and_arithmetic_branches():
 
 
 def test_transaction_terminals_resolve_to_encoded_feature_names():
-    assert str(MeanAmount(1, 0, 2)) == "feat_mean_amount_time_86400"
-    assert str(TotalAmount(1, 0, 8)) == "feat_total_amount_amount_time_total"
-    assert str(StdAmount(1, 0, 1)) == "feat_std_amount_time_21600"
-    assert str(CountTotal(8)) == "feat_count_total_amount_time_total"
-    assert str(CountCategory(0, 0, 0, 0, 0)) == (
-        "feat_count_category_status_0_amount_row_5"
+    assert str(MeanAmount(len(TX_ROW_WINDOWS) + 2)) == "feat_mean_amount_time_86400000000"
+    assert str(TotalAmount(len(TX_ROW_WINDOWS) + 8)) == (
+        "feat_total_amount_amount_time_total"
     )
+    assert str(StdAmount(len(TX_ROW_WINDOWS) + 1)) == "feat_std_amount_time_21600000000"
+    assert str(CountTotal(8)) == "feat_count_total_amount_time_total"
+    assert str(CountCategory(0, 0, 0)) == "feat_count_category_status_0_amount_row_5"
     assert str(AvgDailyCount(0)) == "feat_avg_daily_count_amount_days_7"
     assert str(AvgDailyCountCategory(0, 0, 1)) == (
         "feat_avg_daily_count_category_status_0_amount_days_14"
@@ -80,17 +81,17 @@ def test_category_rate_collects_both_primitive_dependencies_and_is_safe():
     names = {feature.name for feature in dependencies}
 
     assert names == {
-        "feat_count_category_status_0_amount_time_21600",
-        "feat_count_total_amount_time_21600",
+        "feat_count_category_status_0_amount_time_21600000000",
+        "feat_count_total_amount_time_21600000000",
     }
 
     values = {name: np.array([2.0, 0.0, 1.0]) for name in names}
-    values["feat_count_total_amount_time_21600"] = np.array([4.0, 0.0, 0.0])
+    values["feat_count_total_amount_time_21600000000"] = np.array([4.0, 0.0, 0.0])
     np.testing.assert_allclose(rate.evaluate(values), [0.5, 0.0, 0.0])
 
 
 def test_arithmetic_nodes_evaluate_and_have_stable_string_forms():
-    left = MeanAmount(0, 0, 0)
+    left = MeanAmount(0)
     right = CountTotal(0)
     values = {
         left.to_feature_spec().name: np.array([2.0, -4.0, 0.0]),
@@ -106,17 +107,9 @@ def test_arithmetic_nodes_evaluate_and_have_stable_string_forms():
 
 
 def test_collect_features_handles_nested_arithmetic():
-    expression = Log(Add(MeanAmount(0, 0, 0), TotalAmount(0, 0, 0)))
+    expression = Log(Add(MeanAmount(0), TotalAmount(0)))
     dependencies = collect_features(expression)
 
     assert len(dependencies) == 2
     assert count_nodes(expression) == 4
     assert tree_depth(expression) == 3
-
-
-def test_transaction_grammar_remains_available_for_current_kernels():
-    from automatedfe.features import AggregationFeature, build_transaction_grammar
-
-    grammar = build_transaction_grammar()
-
-    assert grammar.starting_symbol is AggregationFeature

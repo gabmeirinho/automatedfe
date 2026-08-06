@@ -25,18 +25,18 @@ DAILY_KINDS: Final[set[str]] = {
 }
 
 TOTAL_TIME_WINDOW: Final[int] = -1
-DAY_SECONDS: Final[int] = 24 * 60 * 60
+DAY_MICROSECONDS: Final[int] = 24 * 60 * 60 * 1_000_000
 
 TX_ROW_WINDOWS: Final[list[int]] = [5, 10, 20, 50, 100, 200, 400, 800, 1600]
 TX_TIME_WINDOWS: Final[list[int]] = [
-    3600,
-    6 * 3600,
-    24 * 3600,
-    7 * 24 * 3600,
-    14 * 24 * 3600,
-    30 * 24 * 3600,
-    60 * 24 * 3600,
-    90 * 24 * 3600,
+    3600 * 1_000_000,
+    6 * 3600 * 1_000_000,
+    24 * 3600 * 1_000_000,
+    7 * 24 * 3600 * 1_000_000,
+    14 * 24 * 3600 * 1_000_000,
+    30 * 24 * 3600 * 1_000_000,
+    60 * 24 * 3600 * 1_000_000,
+    90 * 24 * 3600 * 1_000_000,
     TOTAL_TIME_WINDOW,
 ]
 TX_DAYS_WINDOWS: Final[list[int]] = [7, 14, 30]
@@ -49,7 +49,9 @@ FAMILIES: Final[list[str]] = [
     "document_type",
 ]
 
-WINDOW_TYPE: Final[list[str]] = ["row", "time"]
+TX_WINDOWS: Final[tuple[tuple[str, int], ...]] = tuple(
+    ("row", window) for window in TX_ROW_WINDOWS
+) + tuple(("time", window) for window in TX_TIME_WINDOWS)
 
 
 def code_lists_from_mapping(
@@ -75,11 +77,11 @@ __all__ = [
     "CATEGORY_KINDS",
     "code_lists_from_mapping",
     "DAILY_KINDS",
-    "DAY_SECONDS",
+    "DAY_MICROSECONDS",
     "FAMILIES",
     "TOTAL_TIME_WINDOW",
     "TX_DAYS_WINDOWS",
     "TX_ROW_WINDOWS",
     "TX_TIME_WINDOWS",
-    "WINDOW_TYPE",
+    "TX_WINDOWS",
 ]

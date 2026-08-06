@@ -1,18 +1,4 @@
-"""Materialize GP individuals from the transaction mmap columns.
-
-The preprocessing materializer stores the source transaction columns. This
-module is the bridge used before GP evaluation: it takes an individual (or a
-``FeatureSpec``), resolves the source columns from those mmaps, and computes
-the individual's aggregation with the compiled sliding-window kernel.
-
-Derived features are cached by :class:`FeatureMaterializer` for the lifetime
-of a materialization run. The event-level values consumed by fitness are
-persisted to disk when *features_dir* is configured, so a feature seen in an
-earlier run is loaded from disk instead of recomputed. The optional
-*output_dir* persists the per-transaction (one row per transaction) feature
-arrays; later requests for the same feature reuse the cached array instead
-of recomputing or overwriting it.
-"""
+"""Materialize primitive features and complete grammar expressions."""
 
 from __future__ import annotations
 
@@ -27,8 +13,8 @@ from typing import Any
 import numpy as np
 
 from ..transaction_materialization import DEFAULT_MMAP_DIR, load_mmapped_columns
-from .feature_spec import FeatureSpec, RowWindow, TimeWindow
-from .kernels import aggregate
+from .event_kernels import compute_event_feature
+from .feature_types import TxFeature
 
 MERCHANT_ID_COLUMN = "merchant_id"
 CREATED_AT_COLUMN = "created_at"
@@ -39,180 +25,151 @@ EVENT_FEATURE_METADATA_SUFFIX = ".events.json"
 logger = logging.getLogger(__name__)
 
 
-def _feature_spec(individual: FeatureSpec | Any) -> FeatureSpec:
-    """Return a feature specification from a spec or a GP individual."""
+def _individual_name(individual: TxFeature | Any) -> str:
+    if isinstance(individual, TxFeature):
+        return individual.name
+    return str(individual)
 
-    if isinstance(individual, FeatureSpec):
+
+def _primitive_feature(individual: TxFeature | Any) -> TxFeature:
+    """Resolve a grammar leaf or descriptor to the canonical feature class."""
+
+    if isinstance(individual, TxFeature):
         return individual
-    to_spec = getattr(individual, "to_feature_spec", None)
-    if to_spec is None or not callable(to_spec):
+
+    # CategoryRate is an expression despite exposing to_feature_spec() for
+    # compatibility: its value depends on both numerator and denominator.
+    from .grammar import CategoryRate, NON_TERMINALS
+
+    if isinstance(individual, CategoryRate) or isinstance(individual, NON_TERMINALS):
+        raise TypeError("The expression must be evaluated from its primitive dependencies")
+
+    to_feature = getattr(individual, "to_feature_spec", None)
+    if to_feature is None or not callable(to_feature):
         raise TypeError(
-            "individual must be a FeatureSpec or expose to_feature_spec()"
+            "individual must be a TxFeature or expose to_feature_spec()"
         )
-    spec = to_spec()
-    if not isinstance(spec, FeatureSpec):
-        raise TypeError("to_feature_spec() must return a FeatureSpec")
-    return spec
+    feature = to_feature()
+    if not isinstance(feature, TxFeature):
+        raise TypeError("to_feature_spec() must return a TxFeature")
+    return feature
 
 
-def _required_columns(spec: FeatureSpec) -> list[str]:
-    columns = [MERCHANT_ID_COLUMN]
-    if spec.input_column is not None:
-        columns.append(spec.input_column)
-    if isinstance(spec.window, TimeWindow):
-        columns.append(CREATED_AT_COLUMN)
-    return list(dict.fromkeys(columns))
+def _primitive_dependencies(individual: Any) -> set[TxFeature]:
+    from .grammar import collect_features
+
+    return collect_features(individual)
 
 
-def _validate_columns(
-    columns: Mapping[str, np.ndarray], required: list[str]
-) -> int:
-    missing = [column for column in required if column not in columns]
-    if missing:
-        raise ValueError(
-            "Cannot materialize feature; missing column(s): "
-            + ", ".join(sorted(missing))
-        )
+def _cache_stem(name: str) -> str:
+    """Return a filesystem-safe cache stem while preserving simple names."""
 
-    rows = len(columns[required[0]])
-    for column in required:
-        values = columns[column]
-        if values.ndim != 1:
-            raise ValueError(f"Column {column!r} must be one-dimensional")
-        if len(values) != rows:
-            raise ValueError(
-                f"Column {column!r} has {len(values)} rows, expected {rows}"
-            )
-    return rows
+    if name and not any(character in name for character in "/\\\0"):
+        return name
+    digest = hashlib.blake2b(name.encode("utf-8"), digest_size=16).hexdigest()
+    return f"expression_{digest}"
+
+
+def _category_values(
+    feature: TxFeature,
+    columns: Mapping[str, np.ndarray],
+) -> np.ndarray | None:
+    if feature.category_family is None:
+        return None
+    candidates = (
+        feature.category_family,
+        f"{feature.category_family}_code",
+    )
+    for column in candidates:
+        if column in columns:
+            return np.asarray(columns[column])
+    raise ValueError(
+        f"Cannot materialize categorical feature {feature.name!r}; "
+        f"missing category column for family {feature.category_family!r}"
+    )
+
+
+def _event_columns(
+    columns: Mapping[str, np.ndarray],
+    *,
+    require_amount: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Prepare and validate transaction columns for event feature computation."""
+
+    if MERCHANT_ID_COLUMN not in columns:
+        raise ValueError("Cannot materialize feature; missing column(s): merchant_id")
+    merchant_ids = np.asarray(columns[MERCHANT_ID_COLUMN])
+    rows = len(merchant_ids)
+    timestamps = columns.get(CREATED_AT_COLUMN)
+    if timestamps is None:
+        # Row-window unit tests and callers with synthetic rows need no real
+        # clock; a monotonic sequence preserves preceding-row semantics.
+        timestamps = np.arange(rows, dtype=np.int64)
+    timestamps = np.asarray(timestamps, dtype=np.int64)
+    if merchant_ids.ndim != 1 or timestamps.ndim != 1:
+        raise ValueError("Transaction columns must be one-dimensional")
+    if len(timestamps) != rows:
+        raise ValueError("merchant_id and created_at must have equal lengths")
+    amount = columns.get("amount")
+    if amount is None:
+        if require_amount:
+            raise ValueError("Cannot materialize feature; missing column(s): amount")
+        amount = np.zeros(rows, dtype=np.float64)
+    amount = np.asarray(amount)
+    if amount.ndim != 1 or len(amount) != rows:
+        raise ValueError("amount must match merchant_id row count")
+    return merchant_ids, timestamps, amount
+
+
+def _compute_primitive(
+    feature: TxFeature,
+    columns: Mapping[str, np.ndarray],
+    event_merchants: np.ndarray,
+    event_timestamps: np.ndarray,
+) -> np.ndarray:
+    tx_merchants, tx_timestamps, tx_amount = _event_columns(
+        columns,
+        require_amount=feature.kind not in {"count_total", "count_category"},
+    )
+    return compute_event_feature(
+        tx_merchants,
+        tx_timestamps,
+        tx_amount,
+        _category_values(feature, columns),
+        event_merchants,
+        event_timestamps,
+        kind=feature.kind,
+        window_type=feature.window_type,
+        window=feature.window,
+        category_code=feature.category_code,
+    )
 
 
 def materialize_feature(
-    individual: FeatureSpec | Any,
+    individual: TxFeature | Any,
     columns: Mapping[str, np.ndarray] | str | PathLike[str],
     *,
     output_path: str | PathLike[str] | None = None,
 ) -> np.ndarray:
-    """Compute and optionally persist the aggregation represented by *individual*.
-
-    ``columns`` is normally the mapping returned by
-    :func:`automatedfe.transaction_materialization.load_mmapped_columns`, but it may also
-    be the directory containing that mapping's manifest. The result has
-    one ``float64`` value per transaction row and excludes the current row,
-    matching :func:`~automatedfe.features.aggregate`.
-
-    When *output_path* is supplied, the result is copied into a ``float64``
-    memory-mapped file. Existing files are overwritten. Caching is provided by
-    :class:`FeatureMaterializer`, which owns the cache for a search run.
-    """
+    """Materialize one descriptor or complete grammar expression."""
 
     if not isinstance(columns, Mapping):
         columns = load_mmapped_columns(Path(columns))
-
-    spec = _feature_spec(individual)
-    required = _required_columns(spec)
-    rows = _validate_columns(columns, required)
-
-    result = aggregate(
-        columns[MERCHANT_ID_COLUMN],
-        columns.get(spec.input_column) if spec.input_column is not None else None,
-        columns.get(CREATED_AT_COLUMN),
-        spec.aggregation,
-        spec.window,
-    )
+    materializer = FeatureMaterializer(columns)
+    result = materializer.materialize(individual)
     if output_path is None:
         return result
 
     path = Path(output_path).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    mapped = np.memmap(path, dtype=np.float64, mode="w+", shape=(rows,))
+    mapped = np.memmap(path, dtype=np.float64, mode="w+", shape=result.shape)
     mapped[:] = result
     mapped.flush()
     return mapped
 
 
-def _materialize_event_feature(
-    spec: FeatureSpec,
-    columns: Mapping[str, np.ndarray],
-    event_merchants: np.ndarray,
-    event_timestamps: np.ndarray,
-) -> np.ndarray:
-    """Calculate a transaction-history feature at each event timestamp."""
-
-    transaction_merchants = np.asarray(columns[MERCHANT_ID_COLUMN])
-    transaction_timestamps = np.asarray(columns[CREATED_AT_COLUMN], dtype=np.int64)
-    values = None if spec.input_column is None else np.asarray(columns[spec.input_column])
-    result = np.full(len(event_timestamps), np.nan, dtype=np.float64)
-
-    order = np.argsort(event_merchants, kind="stable")
-    boundaries = np.flatnonzero(
-        event_merchants[order][1:] != event_merchants[order][:-1]
-    ) + 1
-    for event_indices in np.split(order, boundaries):
-        merchant = event_merchants[event_indices[0]]
-        start = np.searchsorted(transaction_merchants, merchant, side="left")
-        stop = np.searchsorted(transaction_merchants, merchant, side="right")
-        if start == stop:
-            if spec.input_column is None:
-                result[event_indices] = 0.0
-            continue
-
-        timestamps = transaction_timestamps[start:stop]
-        event_times = event_timestamps[event_indices]
-        right = np.searchsorted(timestamps, event_times, side="left")
-        if isinstance(spec.window, RowWindow):
-            left = np.maximum(0, right - spec.window.rows)
-        elif isinstance(spec.window, TimeWindow):
-            left = np.searchsorted(
-                timestamps,
-                event_times - spec.window.microseconds,
-                side="left",
-            )
-        else:
-            left = np.zeros_like(right)
-
-        counts = right - left
-        if spec.input_column is None:
-            result[event_indices] = counts
-            continue
-
-        merchant_values = np.nan_to_num(values[start:stop])
-        if spec.aggregation.value in {"sum", "mean"}:
-            prefix = np.concatenate(
-                ([0.0], np.cumsum(merchant_values, dtype=np.float64))
-            )
-            totals = prefix[right] - prefix[left]
-            non_empty = counts > 0
-            result[event_indices[non_empty]] = totals[non_empty]
-            if spec.aggregation.value == "mean":
-                result[event_indices[non_empty]] /= counts[non_empty]
-        elif spec.aggregation.value == "max":
-            for index, window_start, window_stop in zip(event_indices, left, right):
-                if window_start < window_stop:
-                    result[index] = np.max(
-                        merchant_values[window_start:window_stop]
-                    )
-        else:
-            raise ValueError(f"Unsupported aggregation: {spec.aggregation.value}")
-
-    return result
-
-
 class FeatureMaterializer:
-    """Materialize GP individuals from already materialized source columns.
-
-    *columns* may be a mapping of arrays or the directory containing the
-    transaction mmap manifest. Source columns are opened once when this
-    object is constructed. Derived aggregations are retained in a per-run
-    cache, keyed by their :class:`FeatureSpec`. Set *output_dir* to persist
-    each derived feature as ``<feature-name>.mmap``; otherwise the result is
-    an in-memory NumPy array.
-
-    *features_dir* enables a cross-run, event-level disk cache used by
-    :meth:`materialize_for_events`: each feature is stored as one ``float64``
-    value per event (a few megabytes), keyed by its spec name and validated
-    against the event set checksum. A later run reading the same feature
-    loads it from disk instead of recomputing it.
-    """
+    """Materialize ``TxFeature`` leaves and complete grammar expressions."""
 
     def __init__(
         self,
@@ -229,41 +186,40 @@ class FeatureMaterializer:
         self.features_dir = (
             None if features_dir is None else Path(features_dir).resolve()
         )
-        self._cache: dict[FeatureSpec, np.ndarray] = {}
+        self._cache: dict[str, np.ndarray] = {}
         self._event_cache: dict[
-            tuple[FeatureSpec, int, int],
-            tuple[np.ndarray, np.ndarray, np.ndarray],
+            tuple[str, int, int], tuple[np.ndarray, np.ndarray, np.ndarray]
         ] = {}
 
-    def materialize(self, individual: FeatureSpec | Any) -> np.ndarray:
-        """Materialize one GP individual, reusing a feature seen in this run."""
+    def _transaction_events(self) -> tuple[np.ndarray, np.ndarray]:
+        merchants, timestamps, _ = _event_columns(self.columns)
+        return merchants, timestamps
 
-        spec = _feature_spec(individual)
-        if spec in self._cache:
-            logger.info("Reusing cached feature: %s", spec.name)
-            return self._cache[spec]
+    def materialize(self, individual: TxFeature | Any) -> np.ndarray:
+        """Materialize one individual over the transaction rows."""
 
-        output_path = None
-        if self.output_dir is not None:
-            output_path = self.output_dir / f"{spec.name}{FEATURE_MMAP_SUFFIX}"
-        if output_path is None:
-            logger.info("Materializing feature: %s", spec.name)
-        else:
-            logger.info("Materializing feature: %s -> %s", spec.name, output_path)
-        result = materialize_feature(
-            spec,
-            self.columns,
-            output_path=output_path,
+        name = _individual_name(individual)
+        if name in self._cache:
+            logger.info("Reusing cached feature: %s", name)
+            return self._cache[name]
+
+        event_merchants, event_timestamps = self._transaction_events()
+        result = self.materialize_for_events(
+            individual, event_merchants, event_timestamps
         )
-        self._cache[spec] = result
+        if self.output_dir is not None:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            path = self.output_dir / f"{_cache_stem(name)}{FEATURE_MMAP_SUFFIX}"
+            mapped = np.memmap(path, dtype=np.float64, mode="w+", shape=result.shape)
+            mapped[:] = result
+            mapped.flush()
+            result = mapped
+        self._cache[name] = result
         return result
 
     __call__ = materialize
 
-    def materialize_population(
-        self,
-        individuals: list[FeatureSpec | Any],
-    ) -> None:
+    def materialize_population(self, individuals: list[TxFeature | Any]) -> None:
         """Materialize an already-generated population in its given order."""
 
         for individual in individuals:
@@ -274,8 +230,6 @@ class FeatureMaterializer:
         event_merchants: np.ndarray,
         event_timestamps: np.ndarray,
     ) -> str:
-        """Return a stable digest identifying the event set and its ordering."""
-
         digest = hashlib.blake2b(digest_size=16)
         digest.update(np.ascontiguousarray(event_merchants).view(np.uint8))
         digest.update(np.ascontiguousarray(event_timestamps).view(np.uint8))
@@ -283,20 +237,17 @@ class FeatureMaterializer:
 
     def _load_event_feature(
         self,
-        spec: FeatureSpec,
+        name: str,
         event_merchants: np.ndarray,
         event_timestamps: np.ndarray,
     ) -> np.ndarray | None:
-        """Return the persisted event-level feature, or None on any mismatch."""
-
         if self.features_dir is None:
             return None
 
         checksum = self._event_set_checksum(event_merchants, event_timestamps)
-        cache_path = self.features_dir / f"{spec.name}{EVENT_FEATURE_MMAP_SUFFIX}"
-        metadata_path = (
-            self.features_dir / f"{spec.name}{EVENT_FEATURE_METADATA_SUFFIX}"
-        )
+        stem = _cache_stem(name)
+        cache_path = self.features_dir / f"{stem}{EVENT_FEATURE_MMAP_SUFFIX}"
+        metadata_path = self.features_dir / f"{stem}{EVENT_FEATURE_METADATA_SUFFIX}"
         try:
             metadata = json.loads(metadata_path.read_text())
         except (OSError, ValueError):
@@ -305,6 +256,10 @@ class FeatureMaterializer:
             not isinstance(metadata, dict)
             or metadata.get("checksum") != checksum
             or metadata.get("rows") != len(event_timestamps)
+            or (
+                metadata.get("name") is not None
+                and metadata.get("name") != name
+            )
         ):
             return None
         try:
@@ -313,81 +268,127 @@ class FeatureMaterializer:
             return None
         if cached.size != len(event_timestamps):
             return None
-        logger.info("Reusing cached event feature from disk: %s", spec.name)
+        logger.info("Reusing cached event feature from disk: %s", name)
         return cached
 
     def _store_event_feature(
         self,
-        spec: FeatureSpec,
+        name: str,
         event_merchants: np.ndarray,
         event_timestamps: np.ndarray,
         values: np.ndarray,
     ) -> None:
-        """Persist the event-level feature and its event-set checksum."""
-
         if self.features_dir is None:
             return
         self.features_dir.mkdir(parents=True, exist_ok=True)
         checksum = self._event_set_checksum(event_merchants, event_timestamps)
-        cache_path = self.features_dir / f"{spec.name}{EVENT_FEATURE_MMAP_SUFFIX}"
-        metadata_path = (
-            self.features_dir / f"{spec.name}{EVENT_FEATURE_METADATA_SUFFIX}"
-        )
+        stem = _cache_stem(name)
+        cache_path = self.features_dir / f"{stem}{EVENT_FEATURE_MMAP_SUFFIX}"
+        metadata_path = self.features_dir / f"{stem}{EVENT_FEATURE_METADATA_SUFFIX}"
         mapped = np.memmap(cache_path, dtype=np.float64, mode="w+", shape=values.shape)
         mapped[:] = values
         mapped.flush()
         metadata_path.write_text(
-            json.dumps({"rows": int(len(values)), "checksum": checksum})
+            json.dumps(
+                {
+                    "name": name,
+                    "rows": int(len(values)),
+                    "checksum": checksum,
+                }
+            )
         )
 
-    def materialize_for_events(
+    def _materialize_expression(
         self,
-        individual: FeatureSpec | Any,
+        individual: Any,
         event_merchants: np.ndarray,
         event_timestamps: np.ndarray,
     ) -> np.ndarray:
-        """Materialize *individual* and return its value at each event.
-
-        The values are computed directly from the source transaction columns
-        (not from the per-transaction feature arrays). When *features_dir* is
-        configured, results are persisted as one ``float64`` per event and
-        reused across runs whenever the event set matches.
-        """
-
-        spec = _feature_spec(individual)
-        event_merchants = np.asarray(event_merchants)
-        event_timestamps = np.asarray(event_timestamps, dtype=np.int64)
-        cache_key = (spec, id(event_merchants), id(event_timestamps))
-        if cache_key not in self._event_cache:
-            values = self._load_event_feature(
-                spec, event_merchants, event_timestamps
+        feature_values = {
+            feature.name: self._materialize_primitive_for_events(
+                feature, event_merchants, event_timestamps
             )
-            if values is None:
-                logger.info("Materializing event feature: %s", spec.name)
-                values = _materialize_event_feature(
-                    spec,
-                    self.columns,
-                    event_merchants,
-                    event_timestamps,
-                )
-                self._store_event_feature(
-                    spec, event_merchants, event_timestamps, values
-                )
-            self._event_cache[cache_key] = (
+            for feature in _primitive_dependencies(individual)
+        }
+        return np.asarray(individual.evaluate(feature_values), dtype=np.float64)
+
+    def _materialize_primitive_for_events(
+        self,
+        feature: TxFeature,
+        event_merchants: np.ndarray,
+        event_timestamps: np.ndarray,
+    ) -> np.ndarray:
+        name = feature.name
+        cache_key = (name, id(event_merchants), id(event_timestamps))
+        cached = self._event_cache.get(cache_key)
+        if cached is not None:
+            return cached[2]
+
+        values = self._load_event_feature(name, event_merchants, event_timestamps)
+        if values is None:
+            logger.info("Materializing event feature: %s", name)
+            values = _compute_primitive(
+                feature,
+                self.columns,
                 event_merchants,
                 event_timestamps,
-                values,
             )
-        return self._event_cache[cache_key][2]
+            self._store_event_feature(
+                name, event_merchants, event_timestamps, values
+            )
+        self._event_cache[cache_key] = (
+            event_merchants,
+            event_timestamps,
+            values,
+        )
+        return values
+
+    def materialize_for_events(
+        self,
+        individual: TxFeature | Any,
+        event_merchants: np.ndarray,
+        event_timestamps: np.ndarray,
+    ) -> np.ndarray:
+        """Materialize an individual at each event row."""
+
+        event_merchants = np.asarray(event_merchants, dtype=np.int64)
+        event_timestamps = np.asarray(event_timestamps, dtype=np.int64)
+        name = _individual_name(individual)
+        cache_key = (name, id(event_merchants), id(event_timestamps))
+        cached = self._event_cache.get(cache_key)
+        if cached is not None:
+            return cached[2]
+
+        values = self._load_event_feature(name, event_merchants, event_timestamps)
+        if values is None:
+            try:
+                feature = _primitive_feature(individual)
+            except TypeError:
+                values = self._materialize_expression(
+                    individual, event_merchants, event_timestamps
+                )
+            else:
+                values = self._materialize_primitive_for_events(
+                    feature, event_merchants, event_timestamps
+                )
+            self._store_event_feature(
+                name, event_merchants, event_timestamps, values
+            )
+        self._event_cache[cache_key] = (
+            event_merchants,
+            event_timestamps,
+            values,
+        )
+        return values
 
 
 def materialize_individual(
-    individual: FeatureSpec | Any,
+    individual: TxFeature | Any,
     columns: Mapping[str, np.ndarray] | str | PathLike[str],
     *,
     output_path: str | PathLike[str] | None = None,
 ) -> np.ndarray:
-    """Compatibility-oriented alias for :func:`materialize_feature`."""
+    """Compatibility alias for :func:`materialize_feature`."""
 
     return materialize_feature(individual, columns, output_path=output_path)
 
