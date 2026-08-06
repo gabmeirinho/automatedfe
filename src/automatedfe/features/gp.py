@@ -125,6 +125,7 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
         super().__init__(*args, **kwargs)
         self.materializer = materializer
         self.fitness_evaluator = fitness_evaluator
+        self.last_individuals: list[PhenotypicIndividual] = []
 
     def precompute_population(
         self,
@@ -133,6 +134,7 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
     ) -> None:
         """Materialize all already-generated individuals in this generation."""
 
+        self.last_individuals = list(individuals)
         phenotypes = [individual.get_phenotype() for individual in individuals]
         logger.info(
             "Materializing generation %d: %d GP features",

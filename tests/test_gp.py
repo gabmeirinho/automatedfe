@@ -171,6 +171,20 @@ def test_tracker_records_every_evaluation_to_csv(tmp_path):
     )
 
 
+def test_search_tracks_the_final_generated_population(tmp_path):
+    algorithm = build_search_algorithm(
+        build_grammar(),
+        EvaluationBudget(10),
+        population_size=10,
+        seed=123,
+        mmap_dir=write_mmap_fixture(tmp_path / "mmap"),
+    )
+
+    algorithm.search()
+
+    assert len(algorithm.last_individuals) == algorithm.population_size
+
+
 def test_search_requires_a_positive_population_size(tmp_path):
     with pytest.raises(ValueError, match="population_size must be positive"):
         build_search_algorithm(
