@@ -124,6 +124,40 @@ def test_sliding_sum_subtracts_evicted_row():
     np.testing.assert_allclose(actual, expected, equal_nan=True)
 
 
+@pytest.mark.parametrize("aggregation", ["sum", "mean"])
+def test_row_ring_buffer_wraps_repeatedly(aggregation):
+    merchant_ids = np.ones(100, dtype=np.int64)
+    values = np.arange(100, dtype=np.float64)
+    actual = sliding_window(
+        merchant_ids,
+        values,
+        None,
+        aggregation=aggregation,
+        window_mode="rows",
+        window_span=3,
+    )
+    expected = reference(
+        merchant_ids, values, np.empty(100), aggregation, "rows", 3
+    )
+    np.testing.assert_allclose(actual, expected, equal_nan=True)
+
+
+def test_maximum_deque_grows_beyond_initial_capacity():
+    # Decreasing values keep every index in the monotonic deque, exercising
+    # the same dynamic growth path used by the gp-benchmarks max kernels.
+    rows = 1_500
+    actual = sliding_window(
+        np.ones(rows, dtype=np.int64),
+        np.arange(rows, 0, -1, dtype=np.float64),
+        None,
+        aggregation="max",
+        window_mode="total",
+    )
+    expected = np.full(rows, float(rows))
+    expected[0] = math.nan
+    np.testing.assert_allclose(actual, expected, equal_nan=True)
+
+
 def test_count_ignores_values():
     actual = sliding_window(
         np.array([1, 1, 2]),
