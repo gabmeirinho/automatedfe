@@ -43,7 +43,7 @@ def build_search_algorithm(
     seed: int = 42,
     csv_path: str | PathLike[str] | None = None,
     mmap_dir: str | PathLike[str],
-    feature_output_dir: str | PathLike[str] | None = None,
+    feature_cache_dir: str | PathLike[str] | None = None,
     dataset_path: str | PathLike[str] | None = None,
     n_splits: int = DEFAULT_N_SPLITS,
     score_metric: str = "roc_auc",
@@ -51,16 +51,20 @@ def build_search_algorithm(
 ) -> GeneticProgramming:
     """Configure the materializing GP search.
 
-    If *dataset_path* is supplied, each generated feature is evaluated with a
-    fresh logistic-regression fit on the chronological cross-validation folds
-    defined by :class:`LogisticRegressionFitness`. Leaving it ``None``
-    preserves the zero-fitness configuration used by materialization-only
-    callers and older experiments.
+    *feature_cache_dir* stores the event-level feature values (one ``float64``
+    per event) computed during the search. Features already present in the
+    cache are loaded from disk instead of recomputed, so repeated runs over
+    the same event set reuse previous work. If *dataset_path* is supplied,
+    each generated feature is evaluated with a fresh logistic-regression fit
+    on the chronological cross-validation folds defined by
+    :class:`LogisticRegressionFitness`. Leaving it ``None`` preserves the
+    zero-fitness configuration used by materialization-only callers and older
+    experiments.
     """
 
     if population_size <= 0:
         raise ValueError("population_size must be positive")
-    materializer = FeatureMaterializer(mmap_dir, output_dir=feature_output_dir)
+    materializer = FeatureMaterializer(mmap_dir, features_dir=feature_cache_dir)
 
     random = NativeRandomSource(seed)
     representation = TreeBasedRepresentation(
@@ -132,7 +136,12 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
         individuals: list[PhenotypicIndividual],
         generation: int,
     ) -> None:
-        """Materialize all already-generated individuals in this generation."""
+        """Prepare the already-generated individuals before evaluation.
+
+        With a fitness evaluator, only the event-level feature values are
+        prepared (computed and cached on disk); the per-transaction feature
+        pass runs exclusively in the materialization-only configuration.
+        """
 
         self.last_individuals = list(individuals)
         phenotypes = [individual.get_phenotype() for individual in individuals]
@@ -141,9 +150,10 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
             generation,
             len(phenotypes),
         )
-        self.materializer.materialize_population(phenotypes)
         if self.fitness_evaluator is not None:
             self.fitness_evaluator.prepare_population(phenotypes)
+        else:
+            self.materializer.materialize_population(phenotypes)
 
 
 __all__ = [

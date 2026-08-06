@@ -45,7 +45,7 @@ def _load_ordered_events(dataset_path: str | PathLike[str]) -> tuple[np.ndarray,
             label
         FROM read_parquet(?)
         WHERE split = ?
-        ORDER BY event_timestamp
+        ORDER BY event_timestamp, merchant_id
         """,
         params=[str(path), TRAIN_SPLIT],
     ).fetchnumpy()

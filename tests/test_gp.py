@@ -119,27 +119,29 @@ def test_mmap_dir_is_passed_to_feature_materializer(tmp_path, monkeypatch):
     captured = {}
 
     class RecordingMaterializer:
-        def __init__(self, columns, *, output_dir=None):
+        def __init__(self, columns, *, output_dir=None, features_dir=None):
             captured["columns"] = columns
             captured["output_dir"] = output_dir
+            captured["features_dir"] = features_dir
 
         def materialize_population(self, individuals):
             pass
 
     monkeypatch.setattr(gp_module, "FeatureMaterializer", RecordingMaterializer)
     mmap_dir = tmp_path / "mmap"
-    feature_output_dir = tmp_path / "features"
+    feature_cache_dir = tmp_path / "features"
 
     algorithm = build_search_algorithm(
         build_grammar(),
         EvaluationBudget(1),
         mmap_dir=mmap_dir,
-        feature_output_dir=feature_output_dir,
+        feature_cache_dir=feature_cache_dir,
     )
 
     assert captured == {
         "columns": mmap_dir,
-        "output_dir": feature_output_dir.resolve(),
+        "output_dir": None,
+        "features_dir": feature_cache_dir.resolve(),
     }
     assert isinstance(algorithm.materializer, RecordingMaterializer)
 
@@ -196,7 +198,6 @@ def test_search_requires_a_positive_population_size(tmp_path):
 
 
 def test_search_materializes_the_complete_initial_population(tmp_path):
-    feature_output_dir = tmp_path / "features"
     algorithm = build_search_algorithm(
         build_grammar(),
         EvaluationBudget(10),
@@ -204,7 +205,6 @@ def test_search_materializes_the_complete_initial_population(tmp_path):
         seed=123,
         csv_path=tmp_path / "gp_search.csv",
         mmap_dir=write_mmap_fixture(tmp_path / "mmap"),
-        feature_output_dir=feature_output_dir,
     )
 
     algorithm.search()
@@ -213,29 +213,6 @@ def test_search_materializes_the_complete_initial_population(tmp_path):
     assert algorithm.tracker.get_number_evaluations() == 10
     rows = list(csv.DictReader((tmp_path / "gp_search.csv").open(newline="")))
     assert {row["Generation"] for row in rows} == {"0"}
-    assert all(
-        (feature_output_dir / f"{row['Expression']}.mmap").exists() for row in rows
-    )
-
-
-def test_feature_output_dir_writes_expected_mmaps(tmp_path):
-    csv_path = tmp_path / "gp_search.csv"
-    feature_output_dir = tmp_path / "features"
-    algorithm = build_search_algorithm(
-        build_grammar(),
-        EvaluationBudget(10),
-        population_size=10,
-        seed=123,
-        csv_path=csv_path,
-        mmap_dir=write_mmap_fixture(tmp_path / "mmap"),
-        feature_output_dir=feature_output_dir,
-    )
-
-    algorithm.search()
-
-    with csv_path.open(newline="") as csv_file:
-        expressions = {row["Expression"] for row in csv.DictReader(csv_file)}
-    assert {path.stem for path in feature_output_dir.glob("*.mmap")} == expressions
 
 
 def test_search_defaults_every_fitness_to_zero(tmp_path):
@@ -255,7 +232,7 @@ def test_search_defaults_every_fitness_to_zero(tmp_path):
 def test_same_seed_produces_same_initial_population_and_results(tmp_path):
     mmap_dir = write_mmap_fixture(tmp_path / "mmap")
 
-    def build(seed, *, csv_path=None, feature_output_dir=None):
+    def build(seed, *, csv_path=None):
         return build_search_algorithm(
             build_grammar(),
             EvaluationBudget(10),
@@ -263,7 +240,6 @@ def test_same_seed_produces_same_initial_population_and_results(tmp_path):
             seed=seed,
             csv_path=csv_path,
             mmap_dir=mmap_dir,
-            feature_output_dir=feature_output_dir,
         )
 
     first_initial = build(123)._generate_initial_individuals()
@@ -274,8 +250,8 @@ def test_same_seed_produces_same_initial_population_and_results(tmp_path):
 
     first_csv = tmp_path / "first.csv"
     second_csv = tmp_path / "second.csv"
-    first = build(123, csv_path=first_csv, feature_output_dir=tmp_path / "first")
-    second = build(123, csv_path=second_csv, feature_output_dir=tmp_path / "second")
+    first = build(123, csv_path=first_csv)
+    second = build(123, csv_path=second_csv)
     first_best = first.search()
     second_best = second.search()
 
