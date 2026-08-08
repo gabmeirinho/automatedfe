@@ -13,6 +13,7 @@ from automatedfe.features import (
 from automatedfe.features.fitness import (
     MIN_LOGIT_WEIGHT,
     LogisticRegressionFitness,
+    objectives_are_finite,
 )
 
 
@@ -329,3 +330,108 @@ def test_residual_evaluator_rejects_a_globally_one_class_dataset(tmp_path):
             dataset_path,
             n_splits=2,
         )
+
+
+def test_objective_vector_returns_fold_scores_and_materialization_time(tmp_path):
+    dataset_path = tmp_path / "dataset.parquet"
+    write_temporal_dataset(dataset_path)
+
+    base = 1_704_067_200_000_000
+    day = 86_400_000_000
+    columns = {
+        "merchant_id": np.ones(12, dtype=np.int64),
+        "created_at": base + np.arange(12, dtype=np.int64) * day,
+        "amount": np.arange(12, dtype=np.float64) % 2,
+    }
+    materializer = FeatureMaterializer(columns)
+    evaluator = LogisticRegressionFitness(materializer, dataset_path)
+    spec = TxFeature("mean", "amount", 1, "row")
+    evaluator.prepare_population([spec])
+
+    vector = evaluator.objective_vector(spec)
+
+    assert len(vector) == 4
+    assert vector[:3] == [1.0, 1.0, 1.0]
+    assert vector[3] >= 0.0
+    assert evaluator.fold_scores == [1.0, 1.0, 1.0]
+    # Cache hits reuse the identical materialization duration.
+    assert evaluator.objective_vector(spec)[3] == vector[3]
+    # The scalar API stays the mean of the fold scores.
+    assert evaluator(spec) == float(np.mean(vector[:3]))
+
+
+def test_residual_objective_vector_returns_fold_scores_and_materialization_time(tmp_path):
+    dataset_path = tmp_path / "dataset.parquet"
+    duckdb.sql(
+        """
+        COPY (
+            SELECT
+                1 AS merchant_id,
+                TIMESTAMP '2024-01-01' + (index + 1) * INTERVAL '1 day'
+                    AS event_timestamp,
+                (index % 2)::INTEGER AS label,
+                'train' AS split
+            FROM range(1200) AS events(index)
+        ) TO ? (FORMAT PARQUET)
+        """,
+        params=[str(dataset_path)],
+    )
+
+    base = 1_704_067_200_000_000
+    day = 86_400_000_000
+    materializer = FeatureMaterializer(
+        {
+            "merchant_id": np.ones(1200, dtype=np.int64),
+            "created_at": base + np.arange(1200, dtype=np.int64) * day,
+            "amount": np.arange(1200, dtype=np.float64) % 2,
+        }
+    )
+    evaluator = ResidualEvaluator(materializer, dataset_path)
+    feature = TxFeature("mean", "amount", 1, "row")
+
+    vector = evaluator.objective_vector(feature)
+
+    assert len(vector) == 4
+    assert vector[:3] == pytest.approx(evaluator.fold_scores)
+    assert vector[3] >= 0.0
+    assert isinstance(evaluator.last_model, DecisionTreeRegressor)
+    assert evaluator.objective_vector(feature)[3] == vector[3]
+    assert evaluator(feature) == pytest.approx(float(np.mean(vector[:3])))
+
+
+def test_objective_vector_raises_on_single_class_validation_fold(tmp_path):
+    dataset_path = tmp_path / "dataset.parquet"
+    duckdb.sql(
+        """
+        COPY (SELECT * FROM (VALUES
+            (1, TIMESTAMP '2024-01-01', 0, 'train'),
+            (1, TIMESTAMP '2024-01-02', 1, 'train'),
+            (1, TIMESTAMP '2024-01-03', 0, 'train'),
+            (1, TIMESTAMP '2024-01-04', 0, 'train'),
+            (1, TIMESTAMP '2024-01-05', 1, 'train')
+        ) AS t(merchant_id, event_timestamp, label, split))
+        TO ? (FORMAT PARQUET)
+        """,
+        params=[str(dataset_path)],
+    )
+    evaluator = LogisticRegressionFitness(
+        FeatureMaterializer(
+            {
+                "merchant_id": np.ones(5, dtype=np.int64),
+                "created_at": np.arange(5, dtype=np.int64),
+                "amount": np.ones(5, dtype=np.float64),
+            }
+        ),
+        dataset_path,
+        n_splits=2,
+    )
+
+    with pytest.raises(ValueError, match="ROC AUC requires both target classes"):
+        evaluator.objective_vector(TxFeature("mean", "amount", 1, "row"))
+
+
+def test_objectives_are_finite_distinguishes_invalid_vectors():
+    assert objectives_are_finite([0.5, 0.6, 0.4, 0.01])
+    assert not objectives_are_finite([0.5, np.nan, 0.4, 0.01])
+    assert not objectives_are_finite([0.5, np.inf, 0.4, 0.01])
+    assert not objectives_are_finite([])

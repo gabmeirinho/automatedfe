@@ -38,6 +38,12 @@ RESIDUAL_SHRINKAGE = 0.2
 MIN_LOGIT_WEIGHT = 1e-4
 
 
+def objectives_are_finite(objectives: Sequence[float]) -> bool:
+    """Return whether every objective entry is a finite number."""
+
+    return len(objectives) > 0 and bool(np.all(np.isfinite(objectives)))
+
+
 def _sigmoid(scores: np.ndarray) -> np.ndarray:
     """Convert log-odds to probabilities without overflowing ``exp``."""
 
@@ -98,7 +104,7 @@ def _load_ordered_events(
         params=[str(path), TRAIN_SPLIT],
     ).fetchnumpy()
 
-    merchants = np.asarray(events[DATASET_MERCHANT_COLUMN])
+    merchants = np.asarray(events[DATASET_MERCHANT_COLUMN], dtype=np.int64)
     timestamps = np.asarray(events[DATASET_TIMESTAMP_COLUMN], dtype=np.int64)
     labels = np.asarray(events[DATASET_TARGET_COLUMN])
     if not len(labels):
@@ -197,6 +203,13 @@ class LogisticRegressionFitness:
             self.event_timestamps,
         )
 
+    def _timed_values_for(self, individual: Any) -> tuple[np.ndarray, float]:
+        return self.materializer.materialize_for_events_with_duration(
+            individual,
+            self.event_merchants,
+            self.event_timestamps,
+        )
+
     def prepare_population(self, individuals: Sequence[Any]) -> None:
         """Calculate and cache every feature before population evaluation."""
 
@@ -204,7 +217,25 @@ class LogisticRegressionFitness:
             self._values_for(individual)
 
     def __call__(self, individual: Any) -> float:
-        values = self._values_for(individual).reshape(-1, 1)
+        fold_scores = self._score_folds(self._values_for(individual), individual)
+        return float(np.mean(fold_scores))
+
+    def objective_vector(self, individual: Any) -> list[float]:
+        """Score every chronological fold and return the objective vector.
+
+        Returns ``[split1, split2, split3, materialization_duration]``: the
+        per-fold scores followed by the cached wall-clock materialization
+        duration in seconds. The first three objectives maximize and the
+        duration minimizes. A vector containing a non-finite entry marks an
+        invalid result that callers must exclude.
+        """
+
+        values, duration = self._timed_values_for(individual)
+        fold_scores = self._score_folds(values, individual)
+        return [*fold_scores, float(duration)]
+
+    def _score_folds(self, values: np.ndarray, individual: Any) -> list[float]:
+        values = np.asarray(values).reshape(-1, 1)
         self.fold_scores = []
         self.last_models = []
 
@@ -242,7 +273,7 @@ class LogisticRegressionFitness:
             )
 
         self.last_model = self.last_models[-1]
-        return float(np.mean(self.fold_scores))
+        return self.fold_scores
 
     evaluate = __call__
 
@@ -315,6 +346,13 @@ class ResidualEvaluator:
             self.event_timestamps,
         )
 
+    def _timed_values_for(self, individual: Any) -> tuple[np.ndarray, float]:
+        return self.materializer.materialize_for_events_with_duration(
+            individual,
+            self.event_merchants,
+            self.event_timestamps,
+        )
+
     def prepare_population(self, individuals: Sequence[Any]) -> None:
         """Calculate and cache every candidate signal before evaluation."""
 
@@ -322,7 +360,25 @@ class ResidualEvaluator:
             self._values_for(individual)
 
     def __call__(self, individual: Any) -> float:
-        values = self._values_for(individual).reshape(-1, 1)
+        fold_scores = self._score_folds(self._values_for(individual), individual)
+        return float(np.mean(fold_scores))
+
+    def objective_vector(self, individual: Any) -> list[float]:
+        """Score every chronological fold and return the objective vector.
+
+        Returns ``[split1, split2, split3, materialization_duration]``: the
+        per-fold scores followed by the cached wall-clock materialization
+        duration in seconds. The first three objectives maximize and the
+        duration minimizes. A vector containing a non-finite entry marks an
+        invalid result that callers must exclude.
+        """
+
+        values, duration = self._timed_values_for(individual)
+        fold_scores = self._score_folds(values, individual)
+        return [*fold_scores, float(duration)]
+
+    def _score_folds(self, values: np.ndarray, individual: Any) -> list[float]:
+        values = np.asarray(values).reshape(-1, 1)
         self.fold_scores = []
         self.fold_baselines = []
         self.fold_baseline_brier_scores = []
@@ -401,7 +457,7 @@ class ResidualEvaluator:
             )
 
         self.last_model = self.last_models[-1]
-        return float(np.mean(self.fold_scores))
+        return self.fold_scores
 
     evaluate = __call__
 
@@ -426,4 +482,5 @@ __all__ = [
     "ResidualEvaluator",
     "ResidualFitness",
     "TRAIN_SPLIT",
+    "objectives_are_finite",
 ]
