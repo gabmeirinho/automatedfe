@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from collections.abc import Mapping
 from os import PathLike
 from pathlib import Path
@@ -186,9 +187,9 @@ class FeatureMaterializer:
         self.features_dir = (
             None if features_dir is None else Path(features_dir).resolve()
         )
-        self._cache: dict[str, np.ndarray] = {}
+        self._cache: dict[str, tuple[np.ndarray, float]] = {}
         self._event_cache: dict[
-            tuple[str, int, int], tuple[np.ndarray, np.ndarray, np.ndarray]
+            tuple[str, int, int], tuple[np.ndarray, np.ndarray, np.ndarray, float]
         ] = {}
 
     def _transaction_events(self) -> tuple[np.ndarray, np.ndarray]:
@@ -198,15 +199,30 @@ class FeatureMaterializer:
     def materialize(self, individual: TxFeature | Any) -> np.ndarray:
         """Materialize one individual over the transaction rows."""
 
-        name = _individual_name(individual)
-        if name in self._cache:
-            logger.info("Reusing cached feature: %s", name)
-            return self._cache[name]
+        return self.materialize_with_duration(individual)[0]
 
+    def materialize_with_duration(
+        self,
+        individual: TxFeature | Any,
+    ) -> tuple[np.ndarray, float]:
+        """Materialize one individual and return ``(values, duration)``.
+
+        The duration is the monotonic wall-clock time of this top-level
+        call. On an in-memory cache hit the previously recorded duration is
+        reused unchanged.
+        """
+
+        name = _individual_name(individual)
+        cached = self._cache.get(name)
+        if cached is not None:
+            logger.info("Reusing cached feature: %s", name)
+            return cached
+
+        started = time.monotonic()
         event_merchants, event_timestamps = self._transaction_events()
-        result = self.materialize_for_events(
+        result = self.materialize_for_events_with_duration(
             individual, event_merchants, event_timestamps
-        )
+        )[0]
         if self.output_dir is not None:
             self.output_dir.mkdir(parents=True, exist_ok=True)
             path = self.output_dir / f"{_cache_stem(name)}{FEATURE_MMAP_SUFFIX}"
@@ -214,8 +230,9 @@ class FeatureMaterializer:
             mapped[:] = result
             mapped.flush()
             result = mapped
-        self._cache[name] = result
-        return result
+        duration = time.monotonic() - started
+        self._cache[name] = (result, duration)
+        return self._cache[name]
 
     __call__ = materialize
 
@@ -240,7 +257,13 @@ class FeatureMaterializer:
         name: str,
         event_merchants: np.ndarray,
         event_timestamps: np.ndarray,
-    ) -> np.ndarray | None:
+    ) -> tuple[np.ndarray, float] | None:
+        """Load a cached feature, returning ``(values, duration)`` or ``None``.
+
+        Metadata written before durations were recorded is treated as a cache
+        miss so that the feature is recomputed once and its metadata repaired.
+        """
+
         if self.features_dir is None:
             return None
 
@@ -252,14 +275,19 @@ class FeatureMaterializer:
             metadata = json.loads(metadata_path.read_text())
         except (OSError, ValueError):
             return None
+        if not isinstance(metadata, dict):
+            return None
+        duration = metadata.get("duration")
         if (
-            not isinstance(metadata, dict)
-            or metadata.get("checksum") != checksum
+            metadata.get("checksum") != checksum
             or metadata.get("rows") != len(event_timestamps)
             or (
                 metadata.get("name") is not None
                 and metadata.get("name") != name
             )
+            or not isinstance(duration, (int, float))
+            or not np.isfinite(duration)
+            or duration < 0
         ):
             return None
         try:
@@ -269,7 +297,7 @@ class FeatureMaterializer:
         if cached.size != len(event_timestamps):
             return None
         logger.info("Reusing cached event feature from disk: %s", name)
-        return cached
+        return cached, float(duration)
 
     def _store_event_feature(
         self,
@@ -277,6 +305,7 @@ class FeatureMaterializer:
         event_merchants: np.ndarray,
         event_timestamps: np.ndarray,
         values: np.ndarray,
+        duration: float,
     ) -> None:
         if self.features_dir is None:
             return
@@ -294,6 +323,7 @@ class FeatureMaterializer:
                     "name": name,
                     "rows": int(len(values)),
                     "checksum": checksum,
+                    "duration": float(duration),
                 }
             )
         )
@@ -324,22 +354,27 @@ class FeatureMaterializer:
         if cached is not None:
             return cached[2]
 
-        values = self._load_event_feature(name, event_merchants, event_timestamps)
-        if values is None:
+        loaded = self._load_event_feature(name, event_merchants, event_timestamps)
+        if loaded is not None:
+            values, duration = loaded
+        else:
             logger.info("Materializing event feature: %s", name)
+            started = time.monotonic()
             values = _compute_primitive(
                 feature,
                 self.columns,
                 event_merchants,
                 event_timestamps,
             )
+            duration = time.monotonic() - started
             self._store_event_feature(
-                name, event_merchants, event_timestamps, values
+                name, event_merchants, event_timestamps, values, duration
             )
         self._event_cache[cache_key] = (
             event_merchants,
             event_timestamps,
             values,
+            duration,
         )
         return values
 
@@ -351,16 +386,36 @@ class FeatureMaterializer:
     ) -> np.ndarray:
         """Materialize an individual at each event row."""
 
+        return self.materialize_for_events_with_duration(
+            individual, event_merchants, event_timestamps
+        )[0]
+
+    def materialize_for_events_with_duration(
+        self,
+        individual: TxFeature | Any,
+        event_merchants: np.ndarray,
+        event_timestamps: np.ndarray,
+    ) -> tuple[np.ndarray, float]:
+        """Materialize an individual at each event row.
+
+        Returns ``(values, duration)`` where the duration is the monotonic
+        wall-clock time of the top-level materialization. In-memory and disk
+        cache hits reuse the originally recorded duration unchanged.
+        """
+
         event_merchants = np.asarray(event_merchants, dtype=np.int64)
         event_timestamps = np.asarray(event_timestamps, dtype=np.int64)
         name = _individual_name(individual)
         cache_key = (name, id(event_merchants), id(event_timestamps))
         cached = self._event_cache.get(cache_key)
         if cached is not None:
-            return cached[2]
+            return cached[2], cached[3]
 
-        values = self._load_event_feature(name, event_merchants, event_timestamps)
-        if values is None:
+        started = time.monotonic()
+        loaded = self._load_event_feature(name, event_merchants, event_timestamps)
+        if loaded is not None:
+            values, duration = loaded
+        else:
             try:
                 feature = _primitive_feature(individual)
             except TypeError:
@@ -371,15 +426,17 @@ class FeatureMaterializer:
                 values = self._materialize_primitive_for_events(
                     feature, event_merchants, event_timestamps
                 )
+            duration = time.monotonic() - started
             self._store_event_feature(
-                name, event_merchants, event_timestamps, values
+                name, event_merchants, event_timestamps, values, duration
             )
         self._event_cache[cache_key] = (
             event_merchants,
             event_timestamps,
             values,
+            duration,
         )
-        return values
+        return values, duration
 
 
 def materialize_individual(

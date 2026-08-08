@@ -13,6 +13,7 @@ from .features.fitness import (
     ResidualEvaluator,
     ResidualFitness,
     TRAIN_SPLIT,
+    objectives_are_finite,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "ResidualEvaluator",
     "ResidualFitness",
     "TRAIN_SPLIT",
+    "objectives_are_finite",
 ]

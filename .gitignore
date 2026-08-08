@@ -8,3 +8,5 @@ __pycache__/
 gp_search.csv
 
 .agents/
+
+PLAN.md
