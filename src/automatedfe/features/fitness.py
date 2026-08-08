@@ -29,7 +29,7 @@ DEFAULT_N_SPLITS = 3
 DEFAULT_RANDOM_STATE = 42
 DEFAULT_MAX_ITERATIONS = 1_000
 RESIDUAL_TREE_PARAMS = {
-    "max_depth": 1,
+    "max_depth": 4,
     "min_samples_leaf": 150,
     "random_state": DEFAULT_RANDOM_STATE,
 }

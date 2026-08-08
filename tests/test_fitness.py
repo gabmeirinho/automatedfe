@@ -189,7 +189,7 @@ def test_residual_evaluator_scores_brier_improvement_over_each_fold_baseline(tmp
     assert score > 0.0
     assert len(evaluator.fold_scores) == 3
     assert isinstance(evaluator.last_model, DecisionTreeRegressor)
-    assert evaluator.last_model.max_depth == 1
+    assert evaluator.last_model.max_depth == 4
     assert evaluator.last_model.min_samples_leaf == 150
     assert evaluator.last_model.random_state == 42
     assert evaluator.fold_scores == pytest.approx(
