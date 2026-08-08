@@ -14,7 +14,12 @@ from .features.feature_materialization import (
     materialize_feature,
     materialize_individual,
 )
-from .fitness import FitnessEvaluator, LogisticRegressionFitness
+from .fitness import (
+    FitnessEvaluator,
+    LogisticRegressionFitness,
+    ResidualEvaluator,
+    ResidualFitness,
+)
 from .preprocessing import preprocess
 from .sorting import (
     DEFAULT_CARD_TOKENS_INPUT,
@@ -52,6 +57,8 @@ __all__ = [
     "FeatureMaterializer",
     "FitnessEvaluator",
     "LogisticRegressionFitness",
+    "ResidualEvaluator",
+    "ResidualFitness",
     "column_dtype",
     "encode_transactions",
     "first_sorting_violation",

@@ -6,3 +6,5 @@ __pycache__/
 *.py[cod]
 
 gp_search.csv
+
+.agents/

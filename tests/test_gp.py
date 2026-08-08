@@ -192,6 +192,41 @@ def test_search_defaults_every_fitness_to_zero(tmp_path):
     assert best[0].get_fitness(algorithm.problem).fitness_components == [0.0]
 
 
+def test_brier_improvement_selects_residual_evaluator(tmp_path, monkeypatch):
+    captured = {}
+
+    class RecordingResidualEvaluator:
+        def __init__(self, materializer, dataset_path, **kwargs):
+            captured["materializer"] = materializer
+            captured["dataset_path"] = dataset_path
+            captured["kwargs"] = kwargs
+
+        def prepare_population(self, individuals):
+            pass
+
+        def __call__(self, individual):
+            return 0.0
+
+    monkeypatch.setattr(gp_module, "ResidualEvaluator", RecordingResidualEvaluator)
+    mmap_dir = write_mmap_fixture(tmp_path / "mmap")
+    dataset_path = tmp_path / "dataset.parquet"
+
+    algorithm = build_search_algorithm(
+        EvaluationBudget(1),
+        mapping=LABEL_MAPPING,
+        mmap_dir=mmap_dir,
+        dataset_path=dataset_path,
+        score_metric="brier_improvement",
+    )
+
+    assert algorithm.fitness_evaluator.__class__ is RecordingResidualEvaluator
+    assert captured["dataset_path"] == dataset_path
+    assert captured["kwargs"] == {
+        "n_splits": 3,
+        "score_metric": "brier_improvement",
+    }
+
+
 def test_same_seed_produces_same_initial_population_and_results(tmp_path):
     mmap_dir = write_mmap_fixture(tmp_path / "mmap")
 
