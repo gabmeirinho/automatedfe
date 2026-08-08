@@ -1,4 +1,6 @@
 
+import json
+
 import duckdb
 import numpy as np
 import pytest
@@ -333,3 +335,172 @@ def test_event_features_are_not_persisted_without_features_dir(tmp_path):
     )
 
     assert list(tmp_path.iterdir()) == []
+
+
+def test_materialize_with_duration_reuses_identical_duration(monkeypatch):
+    columns = {
+        "merchant_id": np.array([1, 1, 1, 2], dtype=np.int64),
+        "amount": np.array([10.0, 20.0, 30.0, 100.0]),
+        "created_at": np.array([1, 2, 3, 1], dtype=np.int64),
+    }
+    spec = TxFeature("mean", "amount", RowWindow(2).rows, "row")
+    calls = 0
+    original = feature_materialization._compute_primitive
+
+    def counted_materialize(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(feature_materialization, "_compute_primitive", counted_materialize)
+    materializer = FeatureMaterializer(columns)
+
+    first_values, first_duration = materializer.materialize_with_duration(spec)
+    second_values, second_duration = materializer.materialize_with_duration(spec)
+
+    assert calls == 1
+    assert first_values is second_values
+    assert first_duration >= 0.0
+    assert first_duration == second_duration
+    np.testing.assert_allclose(first_values, [np.nan, 10.0, 15.0, np.nan], equal_nan=True)
+
+
+def test_materialize_with_duration_preserves_ndarray_api(tmp_path):
+    columns = {
+        "merchant_id": np.array([1, 1, 1, 2], dtype=np.int64),
+        "amount": np.array([10.0, 20.0, 30.0, 100.0]),
+        "created_at": np.array([1, 2, 3, 1], dtype=np.int64),
+    }
+    spec = TxFeature("mean", "amount", RowWindow(2).rows, "row")
+    materializer = FeatureMaterializer(columns, output_dir=tmp_path / "features")
+
+    values, duration = materializer.materialize_with_duration(spec)
+
+    assert isinstance(values, np.memmap)
+    assert duration >= 0.0
+    assert materializer.materialize(spec) is values
+
+
+def test_event_feature_duration_persisted_and_reused_from_disk(tmp_path):
+    columns = {
+        "merchant_id": np.array([1, 1, 1, 2, 2], dtype=np.int64),
+        "created_at": np.array([1, 2, 3, 1, 5], dtype=np.int64),
+        "amount": np.array([10.0, 20.0, 30.0, 40.0, 50.0]),
+    }
+    events_merchants = np.array([1, 2], dtype=np.int64)
+    events_timestamps = np.array([4, 6], dtype=np.int64)
+    spec = TxFeature("sum", "amount", RowWindow(2).rows, "row")
+    features_dir = tmp_path / "features"
+
+    first = FeatureMaterializer(columns, features_dir=features_dir)
+    values, first_duration = first.materialize_for_events_with_duration(
+        spec, events_merchants, events_timestamps
+    )
+    np.testing.assert_allclose(values, [50.0, 90.0])
+    assert first_duration >= 0.0
+
+    metadata = json.loads(
+        (features_dir / f"{spec.name}.events.json").read_text()
+    )
+    assert metadata["duration"] == first_duration
+
+    second = FeatureMaterializer(columns, features_dir=features_dir)
+    cached_values, cached_duration = second.materialize_for_events_with_duration(
+        spec, events_merchants, events_timestamps
+    )
+    np.testing.assert_allclose(cached_values, [50.0, 90.0])
+    assert cached_duration == first_duration
+
+    again_values, again_duration = second.materialize_for_events_with_duration(
+        spec, events_merchants, events_timestamps
+    )
+    np.testing.assert_allclose(again_values, [50.0, 90.0])
+    assert again_duration == cached_duration
+
+
+def test_event_feature_legacy_metadata_without_duration_is_recomputed_once(
+    tmp_path, monkeypatch
+):
+    columns = {
+        "merchant_id": np.array([1, 1, 1, 2, 2], dtype=np.int64),
+        "created_at": np.array([1, 2, 3, 1, 5], dtype=np.int64),
+        "amount": np.array([10.0, 20.0, 30.0, 40.0, 50.0]),
+    }
+    events_merchants = np.array([1, 2], dtype=np.int64)
+    events_timestamps = np.array([4, 6], dtype=np.int64)
+    spec = TxFeature("sum", "amount", RowWindow(2).rows, "row")
+    features_dir = tmp_path / "features"
+    features_dir.mkdir()
+
+    checksum = FeatureMaterializer._event_set_checksum(
+        events_merchants, events_timestamps
+    )
+    legacy_values = np.array([50.0, 90.0])
+    mapped = np.memmap(
+        features_dir / f"{spec.name}.events.mmap",
+        dtype=np.float64,
+        mode="w+",
+        shape=legacy_values.shape,
+    )
+    mapped[:] = legacy_values
+    mapped.flush()
+    (features_dir / f"{spec.name}.events.json").write_text(
+        json.dumps({"name": spec.name, "rows": 2, "checksum": checksum})
+    )
+
+    calls = 0
+    original = feature_materialization._compute_primitive
+
+    def counted_materialize(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(feature_materialization, "_compute_primitive", counted_materialize)
+    materializer = FeatureMaterializer(columns, features_dir=features_dir)
+
+    values, duration = materializer.materialize_for_events_with_duration(
+        spec, events_merchants, events_timestamps
+    )
+    np.testing.assert_allclose(values, [50.0, 90.0])
+    assert calls == 1
+    assert duration >= 0.0
+
+    repaired = json.loads((features_dir / f"{spec.name}.events.json").read_text())
+    assert repaired["duration"] == duration
+
+    calls = 0
+    second = FeatureMaterializer(columns, features_dir=features_dir)
+    cached_values, cached_duration = second.materialize_for_events_with_duration(
+        spec, events_merchants, events_timestamps
+    )
+    assert calls == 0
+    assert cached_duration == duration
+    np.testing.assert_allclose(cached_values, [50.0, 90.0])
+
+
+def test_failed_materialization_does_not_record_timing(tmp_path):
+    columns = {
+        "merchant_id": np.array([1, 1], dtype=np.int64),
+        "created_at": np.array([1, 2], dtype=np.int64),
+    }
+    spec = TxFeature("mean", "amount", RowWindow(2).rows, "row")
+    features_dir = tmp_path / "features"
+    materializer = FeatureMaterializer(columns, features_dir=features_dir)
+
+    with pytest.raises(ValueError, match="missing column.*amount"):
+        materializer.materialize_for_events_with_duration(
+            spec,
+            np.array([1], dtype=np.int64),
+            np.array([3], dtype=np.int64),
+        )
+    assert not features_dir.exists()
+
+    count_spec = TxFeature("count_total", None, RowWindow(2).rows, "row")
+    count_values, count_duration = materializer.materialize_for_events_with_duration(
+        count_spec,
+        np.array([1], dtype=np.int64),
+        np.array([3], dtype=np.int64),
+    )
+    assert count_duration >= 0.0
+    np.testing.assert_allclose(count_values, [2.0])
