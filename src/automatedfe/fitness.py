@@ -10,6 +10,8 @@ from .features.fitness import (
     DEFAULT_RANDOM_STATE,
     FitnessEvaluator,
     LogisticRegressionFitness,
+    ResidualEvaluator,
+    ResidualFitness,
     TRAIN_SPLIT,
 )
 
@@ -23,5 +25,7 @@ __all__ = [
     "DEFAULT_RANDOM_STATE",
     "FitnessEvaluator",
     "LogisticRegressionFitness",
+    "ResidualEvaluator",
+    "ResidualFitness",
     "TRAIN_SPLIT",
 ]

@@ -20,7 +20,7 @@ from geneticengine.representations.tree.treebased import TreeBasedRepresentation
 from geneticengine.solutions.individual import PhenotypicIndividual
 
 from .feature_materialization import FeatureMaterializer
-from .fitness import DEFAULT_N_SPLITS, LogisticRegressionFitness
+from .fitness import DEFAULT_N_SPLITS, LogisticRegressionFitness, ResidualEvaluator
 from .grammar import build_grammar, collect_features
 
 logger = logging.getLogger(__name__)
@@ -50,9 +50,11 @@ def build_search_algorithm(
     per event) computed during the search. Features already present in the
     cache are loaded from disk instead of recomputed, so repeated runs over
     the same event set reuse previous work. If *dataset_path* is supplied,
-    each generated feature is evaluated with a fresh logistic-regression fit
-    on the chronological cross-validation folds defined by
-    :class:`LogisticRegressionFitness`. Leaving it ``None`` preserves the
+    each generated feature is evaluated on chronological cross-validation
+    folds. The default metrics use a fresh logistic-regression fit defined by
+    :class:`LogisticRegressionFitness`; ``score_metric='brier_improvement'``
+    (or ``'brier'``) selects the cheap intercept-plus-residual evaluator
+    defined by :class:`ResidualEvaluator`. Leaving it ``None`` preserves the
     zero-fitness configuration used by materialization-only callers and older
     experiments.
     """
@@ -73,13 +75,21 @@ def build_search_algorithm(
     )
     fitness_evaluator = None
     if dataset_path is not None:
-        fitness_evaluator = LogisticRegressionFitness(
-            materializer,
-            dataset_path,
-            n_splits=n_splits,
-            score_metric=score_metric,
-            random_state=fitness_random_state,
-        )
+        if score_metric in {"brier", "brier_improvement"}:
+            fitness_evaluator = ResidualEvaluator(
+                materializer,
+                dataset_path,
+                n_splits=n_splits,
+                score_metric=score_metric,
+            )
+        else:
+            fitness_evaluator = LogisticRegressionFitness(
+                materializer,
+                dataset_path,
+                n_splits=n_splits,
+                score_metric=score_metric,
+                random_state=fitness_random_state,
+            )
     problem = SingleObjectiveProblem(
         fitness_function=(
             fitness_evaluator if fitness_evaluator is not None else lambda _individual: 0.0
@@ -129,7 +139,7 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
         self,
         *args: object,
         materializer: FeatureMaterializer,
-        fitness_evaluator: LogisticRegressionFitness | None = None,
+        fitness_evaluator: LogisticRegressionFitness | ResidualEvaluator | None = None,
         **kwargs: object,
     ) -> None:
         super().__init__(*args, **kwargs)

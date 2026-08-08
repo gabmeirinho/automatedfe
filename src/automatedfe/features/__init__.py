@@ -35,7 +35,12 @@ from .feature_spec import (
 )
 from .feature_types import TxFeature
 from .final_evaluation import FinalEvaluationResult, FinalEvaluator, TEST_SPLIT
-from .fitness import FitnessEvaluator, LogisticRegressionFitness
+from .fitness import (
+    FitnessEvaluator,
+    LogisticRegressionFitness,
+    ResidualEvaluator,
+    ResidualFitness,
+)
 from .grammar import (
     Add,
     Agg,
@@ -111,6 +116,8 @@ __all__ = [
     "FitnessEvaluator",
     "Log",
     "LogisticRegressionFitness",
+    "ResidualEvaluator",
+    "ResidualFitness",
     "MAX",
     "MERCHANT_ID_COLUMN",
     "MaterializingGeneticProgramming",

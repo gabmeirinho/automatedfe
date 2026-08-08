@@ -12,8 +12,9 @@ import duckdb
 import numpy as np
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import brier_score_loss, roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit
+from sklearn.tree import DecisionTreeRegressor
 
 from .feature_materialization import FeatureMaterializer
 
@@ -27,9 +28,57 @@ TRAIN_SPLIT = "train"
 DEFAULT_N_SPLITS = 3
 DEFAULT_RANDOM_STATE = 42
 DEFAULT_MAX_ITERATIONS = 1_000
+RESIDUAL_TREE_PARAMS = {
+    "max_depth": 1,
+    "min_samples_leaf": 150,
+    "random_state": DEFAULT_RANDOM_STATE,
+}
+RESIDUAL_EPSILON = 1e-6
+RESIDUAL_SHRINKAGE = 0.2
+MIN_LOGIT_WEIGHT = 1e-4
 
 
-def _load_ordered_events(dataset_path: str | PathLike[str]) -> tuple[np.ndarray, ...]:
+def _sigmoid(scores: np.ndarray) -> np.ndarray:
+    """Convert log-odds to probabilities without overflowing ``exp``."""
+
+    lower = np.log(RESIDUAL_EPSILON / (1.0 - RESIDUAL_EPSILON))
+    upper = -lower
+    bounded = np.clip(np.asarray(scores, dtype=np.float64), lower, upper)
+    return 1.0 / (1.0 + np.exp(-bounded))
+
+
+def _logit(probability: float) -> float:
+    probability = float(
+        np.clip(probability, RESIDUAL_EPSILON, 1.0 - RESIDUAL_EPSILON)
+    )
+    return float(np.log(probability / (1.0 - probability)))
+
+
+def _logit_working_response(
+    labels: np.ndarray,
+    scores: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return Newton working responses and binomial curvature weights."""
+
+    probabilities = np.clip(
+        _sigmoid(scores),
+        RESIDUAL_EPSILON,
+        1.0 - RESIDUAL_EPSILON,
+    )
+    weights = np.clip(
+        probabilities * (1.0 - probabilities),
+        MIN_LOGIT_WEIGHT,
+        None,
+    )
+    responses = (np.asarray(labels, dtype=np.float64) - probabilities) / weights
+    return responses, weights
+
+
+def _load_ordered_events(
+    dataset_path: str | PathLike[str],
+    *,
+    require_two_classes: bool = True,
+) -> tuple[np.ndarray, ...]:
     """Load the training events once, in chronological order."""
 
     path = Path(dataset_path).resolve()
@@ -54,7 +103,7 @@ def _load_ordered_events(dataset_path: str | PathLike[str]) -> tuple[np.ndarray,
     labels = np.asarray(events[DATASET_TARGET_COLUMN])
     if not len(labels):
         raise ValueError("Dataset has no rows in the training split")
-    if np.unique(labels).size < 2:
+    if require_two_classes and np.unique(labels).size < 2:
         raise ValueError("Fitness requires at least two target classes")
     return merchants, timestamps, labels
 
@@ -198,6 +247,166 @@ class LogisticRegressionFitness:
     evaluate = __call__
 
 
+class ResidualEvaluator:
+    """Score a candidate by its out-of-sample improvement over a baseline.
+
+    Each chronological fold starts with an intercept-only model in logit
+    space. A shallow decision-tree regressor is fitted to the binomial Newton
+    working response, weighted by the corresponding logit curvature. Its
+    validation prediction is shrunk and added to the baseline logit before a
+    sigmoid converts it back to a probability. The returned score is the
+    relative validation Brier-score improvement, ``1 - corrected / baseline``.
+
+    This is the residual proxy used by ``gp-benchmarks`` when its active set is
+    empty. This evaluator remains stateless across candidates because the
+    automatedfe search does not currently maintain an active-set archive.
+    """
+
+    def __init__(
+        self,
+        materializer: FeatureMaterializer,
+        dataset_path: str | PathLike[str],
+        *,
+        n_splits: int = DEFAULT_N_SPLITS,
+        score_metric: str = "brier_improvement",
+    ) -> None:
+        if n_splits < 2:
+            raise ValueError("n_splits must be at least 2")
+        if score_metric not in {"brier", "brier_improvement"}:
+            raise ValueError(
+                "score_metric must be 'brier_improvement' or 'brier'"
+            )
+        self.materializer = materializer
+        self.dataset_path = Path(dataset_path).resolve()
+        self.n_splits = n_splits
+        # ``brier`` is accepted as a short spelling, but the score is always
+        # an improvement so that higher fitness remains better for GP.
+        self.score_metric = "brier_improvement"
+        (
+            self.event_merchants,
+            self.event_timestamps,
+            self.labels,
+        ) = _load_ordered_events(self.dataset_path, require_two_classes=False)
+        unique_labels = np.unique(self.labels)
+        if not np.all(np.isin(unique_labels, (0, 1))):
+            raise ValueError("Residual evaluation requires binary target labels")
+        if unique_labels.size < 2:
+            raise ValueError("Residual evaluation requires at least two target classes")
+        self.labels = self.labels.astype(np.float64, copy=False)
+        self.cv_splits = _time_series_splits(self.event_timestamps, n_splits)
+
+        # Keep the same convenient single-fold attributes as the existing
+        # evaluator, while exposing all fold diagnostics for the residual path.
+        self.fit_indices, self.validation_indices = self.cv_splits[-1]
+        self.fold_scores: list[float] = []
+        self.fold_baselines: list[float] = []
+        self.fold_baseline_brier_scores: list[float] = []
+        self.fold_corrected_brier_scores: list[float] = []
+        self.last_models: list[DecisionTreeRegressor | None] = []
+        self.last_model: DecisionTreeRegressor | None = None
+        self.last_training_residuals: list[np.ndarray] = []
+        self.last_training_weights: list[np.ndarray] = []
+        self.last_validation_predictions: list[np.ndarray] = []
+
+    def _values_for(self, individual: Any) -> np.ndarray:
+        return self.materializer.materialize_for_events(
+            individual,
+            self.event_merchants,
+            self.event_timestamps,
+        )
+
+    def prepare_population(self, individuals: Sequence[Any]) -> None:
+        """Calculate and cache every candidate signal before evaluation."""
+
+        for individual in individuals:
+            self._values_for(individual)
+
+    def __call__(self, individual: Any) -> float:
+        values = self._values_for(individual).reshape(-1, 1)
+        self.fold_scores = []
+        self.fold_baselines = []
+        self.fold_baseline_brier_scores = []
+        self.fold_corrected_brier_scores = []
+        self.last_models = []
+        self.last_training_residuals = []
+        self.last_training_weights = []
+        self.last_validation_predictions = []
+
+        for fit_indices, validation_indices in self.cv_splits:
+            x_train = values[fit_indices]
+            x_validation = values[validation_indices]
+            y_train = self.labels[fit_indices]
+            y_validation = self.labels[validation_indices]
+
+            imputer = SimpleImputer(strategy="constant", fill_value=0.0)
+            x_train = imputer.fit_transform(x_train)
+            x_validation = imputer.transform(x_validation)
+
+            baseline = float(
+                np.clip(
+                    np.mean(y_train),
+                    RESIDUAL_EPSILON,
+                    1.0 - RESIDUAL_EPSILON,
+                )
+            )
+            baseline_score = _logit(baseline)
+            training_scores = np.full(y_train.shape, baseline_score)
+            validation_scores = np.full(y_validation.shape, baseline_score)
+            baseline_predictions = _sigmoid(validation_scores)
+            training_residuals, training_weights = _logit_working_response(
+                y_train,
+                training_scores,
+            )
+
+            model: DecisionTreeRegressor | None = None
+            if np.std(x_train[:, 0]) < 1e-8:
+                corrected_predictions = baseline_predictions.copy()
+            else:
+                model = DecisionTreeRegressor(**RESIDUAL_TREE_PARAMS)
+                model.fit(
+                    x_train,
+                    training_residuals,
+                    sample_weight=training_weights,
+                )
+                correction = model.predict(x_validation)
+                corrected_predictions = _sigmoid(
+                    validation_scores + RESIDUAL_SHRINKAGE * correction
+                )
+            baseline_brier = float(
+                brier_score_loss(y_validation, baseline_predictions)
+            )
+            corrected_brier = float(
+                brier_score_loss(y_validation, corrected_predictions)
+            )
+            improvement = (
+                0.0
+                if baseline_brier <= 1e-12
+                else 1.0 - (corrected_brier / baseline_brier)
+            )
+
+            self.last_models.append(model)
+            self.last_training_residuals.append(training_residuals.copy())
+            self.last_training_weights.append(training_weights.copy())
+            self.last_validation_predictions.append(corrected_predictions.copy())
+            self.fold_baselines.append(baseline)
+            self.fold_baseline_brier_scores.append(baseline_brier)
+            self.fold_corrected_brier_scores.append(corrected_brier)
+            self.fold_scores.append(float(improvement))
+            logger.info(
+                "Split %d/%d %s Brier improvement=%.6f",
+                len(self.fold_scores),
+                len(self.cv_splits),
+                individual,
+                improvement,
+            )
+
+        self.last_model = self.last_models[-1]
+        return float(np.mean(self.fold_scores))
+
+    evaluate = __call__
+
+
+ResidualFitness = ResidualEvaluator
 FitnessEvaluator = LogisticRegressionFitness
 
 __all__ = [
@@ -210,5 +419,11 @@ __all__ = [
     "DEFAULT_RANDOM_STATE",
     "FitnessEvaluator",
     "LogisticRegressionFitness",
+    "MIN_LOGIT_WEIGHT",
+    "RESIDUAL_EPSILON",
+    "RESIDUAL_SHRINKAGE",
+    "RESIDUAL_TREE_PARAMS",
+    "ResidualEvaluator",
+    "ResidualFitness",
     "TRAIN_SPLIT",
 ]
