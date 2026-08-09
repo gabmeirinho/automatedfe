@@ -3,7 +3,6 @@
 from .encoding import (
     CATEGORICAL_COLUMNS,
     DEFAULT_MAPPING_OUTPUT,
-    DEFAULT_OUTPUT,
     encode_transactions,
     fit_label_mapping,
     load_label_mapping,
