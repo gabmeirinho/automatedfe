@@ -7,6 +7,7 @@ import pytest
 from geneticengine.evaluation.sequential import SequentialEvaluator
 from geneticengine.problems import Fitness, MultiObjectiveProblem
 from geneticengine.solutions.individual import ConcreteIndividual
+from sklearn.ensemble import RandomForestClassifier
 
 from automatedfe.features import (
     ArchiveSnapshot,
@@ -116,6 +117,7 @@ def test_final_evaluator_fits_train_and_scores_test(tmp_path):
     result = evaluator.evaluate([feature])
 
     assert isinstance(result, FinalEvaluationResult)
+    assert isinstance(result.model, RandomForestClassifier)
     # 12 train rows followed by 4 test rows, all materialized.
     assert len(evaluator.event_merchants) == 16
     assert evaluator.train_indices.tolist() == list(range(12))
@@ -131,7 +133,7 @@ def test_final_evaluator_fits_train_and_scores_test(tmp_path):
     )
     assert result.metrics == {"accuracy": 1.0, "roc_auc": 1.0}
     assert result.predictions.tolist() == [0, 1, 0, 1]
-    assert result.model.coef_.shape == (1, 1)
+    assert result.model.n_features_in_ == 1
 
 
 def test_final_evaluator_builds_matrix_from_expressions_and_deduplicates(tmp_path):
@@ -147,7 +149,7 @@ def test_final_evaluator_builds_matrix_from_expressions_and_deduplicates(tmp_pat
 
     result = evaluator.evaluate(individuals)
 
-    assert result.model.coef_.shape == (1, 2)
+    assert result.model.n_features_in_ == 2
     assert result.metrics["accuracy"] >= 0.0
 
 
@@ -214,7 +216,10 @@ def test_final_evaluator_accepts_live_and_loaded_archives_in_stable_order(
     assert materialized[2:4] == [str(expression) for expression in expressions]
     assert loaded_result.metrics == live_result.metrics
     np.testing.assert_array_equal(loaded_result.predictions, live_result.predictions)
-    np.testing.assert_allclose(loaded_result.model.coef_, live_result.model.coef_)
+    np.testing.assert_allclose(
+        loaded_result.model.feature_importances_,
+        live_result.model.feature_importances_,
+    )
 
 
 def test_final_evaluator_can_be_configured_with_an_archive(tmp_path):

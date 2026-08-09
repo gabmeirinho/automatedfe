@@ -40,7 +40,7 @@ def archive_dataset(tmp_path, monkeypatch):
         def objective_vector(self, individual):
             return [0.0, 0.0, 0.0, 0.0]
 
-    monkeypatch.setattr(gp_module, "LogisticRegressionFitness", RecordingObjectiveEvaluator)
+    monkeypatch.setattr(gp_module, "RandomForestFitness", RecordingObjectiveEvaluator)
     return tmp_path / "dataset.parquet"
 
 
@@ -165,7 +165,7 @@ def test_multiobjective_csv_records_all_four_objectives(tmp_path, monkeypatch):
         def objective_vector(self, individual):
             return [0.1, 0.2, 0.3, 0.4]
 
-    monkeypatch.setattr(gp_module, "LogisticRegressionFitness", RecordingObjectiveEvaluator)
+    monkeypatch.setattr(gp_module, "RandomForestFitness", RecordingObjectiveEvaluator)
     csv_path = tmp_path / "gp_search.csv"
     algorithm = build_search_algorithm(
         EvaluationBudget(4),
@@ -328,7 +328,7 @@ def test_dataset_search_uses_one_archive_step_and_returns_initial_archive(
         def objective_vector(self, individual):
             return [0.5, 0.5, 0.5, 0.01]
 
-    monkeypatch.setattr(gp_module, "LogisticRegressionFitness", RecordingObjectiveEvaluator)
+    monkeypatch.setattr(gp_module, "RandomForestFitness", RecordingObjectiveEvaluator)
     algorithm = build_search_algorithm(
         EvaluationBudget(4),
         mapping=LABEL_MAPPING,

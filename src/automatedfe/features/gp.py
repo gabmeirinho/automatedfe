@@ -32,7 +32,7 @@ from geneticengine.solutions.individual import Individual, PhenotypicIndividual
 
 from .archive import ArchiveStep
 from .feature_materialization import FeatureMaterializer
-from .fitness import DEFAULT_N_SPLITS, LogisticRegressionFitness, ResidualEvaluator
+from .fitness import DEFAULT_N_SPLITS, RandomForestFitness, ResidualEvaluator
 from .grammar import build_grammar, collect_features
 
 logger = logging.getLogger(__name__)
@@ -122,7 +122,7 @@ def build_search_algorithm(
     generated feature on exactly three
     chronological cross-validation folds and uses the resulting objective
     vector plus materialization time. The default metrics use a fresh
-    logistic-regression fit defined by :class:`LogisticRegressionFitness`;
+    random-forest fit defined by :class:`RandomForestFitness`;
     ``score_metric='brier_improvement'`` (or ``'brier'``) selects the cheap
     intercept-plus-residual evaluator defined by :class:`ResidualEvaluator`.
     A dataset path is required because this search is always multiobjective.
@@ -156,7 +156,7 @@ def build_search_algorithm(
             score_metric=score_metric,
         )
     else:
-        fitness_evaluator = LogisticRegressionFitness(
+        fitness_evaluator = RandomForestFitness(
             materializer,
             dataset_path,
             n_splits=n_splits,
@@ -236,7 +236,7 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
         self,
         *args: object,
         materializer: FeatureMaterializer,
-        fitness_evaluator: LogisticRegressionFitness | ResidualEvaluator,
+        fitness_evaluator: RandomForestFitness | ResidualEvaluator,
         archive_step: ArchiveStep,
         **kwargs: object,
     ) -> None:

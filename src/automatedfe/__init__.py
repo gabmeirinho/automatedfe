@@ -16,7 +16,7 @@ from .features.feature_materialization import (
 )
 from .fitness import (
     FitnessEvaluator,
-    LogisticRegressionFitness,
+    RandomForestFitness,
     ResidualEvaluator,
     ResidualFitness,
 )
@@ -58,7 +58,7 @@ __all__ = [
     "PROJECT_ROOT",
     "FeatureMaterializer",
     "FitnessEvaluator",
-    "LogisticRegressionFitness",
+    "RandomForestFitness",
     "ResidualEvaluator",
     "ResidualFitness",
     "column_dtype",

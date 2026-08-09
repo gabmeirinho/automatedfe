@@ -11,8 +11,8 @@ from typing import Any
 
 import duckdb
 import numpy as np
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, roc_auc_score
 
 from .archive import ArchiveSnapshot, ArchiveStep, load_archive
@@ -22,7 +22,6 @@ from .fitness import (
     DATASET_MERCHANT_COLUMN,
     DATASET_TARGET_COLUMN,
     DATASET_TIMESTAMP_COLUMN,
-    DEFAULT_MAX_ITERATIONS,
     DEFAULT_RANDOM_STATE,
     TRAIN_SPLIT,
 )
@@ -30,6 +29,10 @@ from .grammar import build_grammar
 
 TEST_SPLIT = "test"
 ARCHIVE_MINIMIZE = (False, False, False, True)
+DEFAULT_N_ESTIMATORS = 50
+DEFAULT_RF_MAX_DEPTH = 10
+DEFAULT_RF_MIN_SAMPLES_LEAF = 2
+DEFAULT_RF_MAX_SAMPLES = 100_000
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +159,7 @@ class FinalEvaluationResult:
     """Test-split metrics and the fitted final model."""
 
     metrics: dict[str, float]
-    model: LogisticRegression
+    model: RandomForestClassifier
     predictions: np.ndarray
 
 
@@ -164,9 +167,9 @@ class FinalEvaluator:
     """Materialize a generated feature set and score it on the test split.
 
     The complete feature matrix is computed over the union of training and
-    test events, then a single logistic regression is fitted on the training
-    rows and scored on the held-out test rows. ``evaluate`` accepts the
-    historical sequence of expressions, a live :class:`ArchiveStep`, an
+    test events, then a random forest is fitted on the training rows and
+    scored on the held-out test rows. ``evaluate`` accepts the historical
+    sequence of expressions, a live :class:`ArchiveStep`, an
     :class:`ArchiveSnapshot`, or a path to an archive JSON file.
     """
 
@@ -176,14 +179,22 @@ class FinalEvaluator:
         dataset_path: str | PathLike[str],
         *,
         random_state: int = DEFAULT_RANDOM_STATE,
-        max_iter: int = DEFAULT_MAX_ITERATIONS,
+        n_estimators: int = DEFAULT_N_ESTIMATORS,
+        max_depth: int | None = DEFAULT_RF_MAX_DEPTH,
+        min_samples_leaf: int = DEFAULT_RF_MIN_SAMPLES_LEAF,
+        max_samples: int | float | None = DEFAULT_RF_MAX_SAMPLES,
+        n_jobs: int = -1,
         mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None = None,
         archive: ArchiveSource | None = None,
     ) -> None:
         self.materializer = materializer
         self.dataset_path = Path(dataset_path).resolve()
         self.random_state = random_state
-        self.max_iter = max_iter
+        self.n_estimators = n_estimators
+        self.max_depth = max_depth
+        self.min_samples_leaf = min_samples_leaf
+        self.max_samples = max_samples
+        self.n_jobs = n_jobs
         self.mapping = mapping
         self.archive = archive
 
@@ -259,7 +270,18 @@ class FinalEvaluator:
         x_train = imputer.fit_transform(x_train)
         x_test = imputer.transform(x_test)
 
-        model = LogisticRegression(max_iter=self.max_iter, random_state=self.random_state)
+        forest_max_samples = self.max_samples
+        if isinstance(forest_max_samples, int):
+            forest_max_samples = min(forest_max_samples, len(x_train))
+        model = RandomForestClassifier(
+            n_estimators=self.n_estimators,
+            max_depth=self.max_depth,
+            min_samples_leaf=self.min_samples_leaf,
+            max_samples=forest_max_samples,
+            class_weight="balanced_subsample",
+            n_jobs=self.n_jobs,
+            random_state=self.random_state,
+        )
         model.fit(x_train, y_train)
         predictions = model.predict(x_test)
         logger.info(

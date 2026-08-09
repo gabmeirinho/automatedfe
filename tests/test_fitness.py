@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import duckdb
 import numpy as np
 import pytest
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeRegressor
 
 from automatedfe.features import (
@@ -12,7 +13,7 @@ from automatedfe.features import (
 )
 from automatedfe.features.fitness import (
     MIN_LOGIT_WEIGHT,
-    LogisticRegressionFitness,
+    RandomForestFitness,
     objectives_are_finite,
 )
 
@@ -58,10 +59,11 @@ def test_fitness_uses_ordered_training_rows_and_excludes_test_rows(tmp_path):
         "amount": np.arange(12, dtype=np.float64) % 2,
     }
     materializer = FeatureMaterializer(columns)
-    evaluator = LogisticRegressionFitness(materializer, dataset_path)
+    evaluator = RandomForestFitness(materializer, dataset_path)
     spec = TxFeature("mean", "amount", 1, "row")
 
     assert evaluator.score_metric == "roc_auc"
+    assert evaluator.n_estimators == 50
     evaluator.prepare_population([spec])
 
     # Every event sees exactly one preceding transaction, and the two test
@@ -75,6 +77,8 @@ def test_fitness_uses_ordered_training_rows_and_excludes_test_rows(tmp_path):
     assert evaluator.fit_indices.tolist() == list(range(9))
     assert evaluator.validation_indices.tolist() == [9, 10, 11]
     assert evaluator(spec) == 1.0
+    assert isinstance(evaluator.last_model, RandomForestClassifier)
+    assert all(model.n_estimators == 50 for model in evaluator.last_models)
     assert len(evaluator.cv_splits) == 3
     assert evaluator.fold_scores == [1.0, 1.0, 1.0]
     for fit_indices, validation_indices in evaluator.cv_splits:
@@ -107,7 +111,7 @@ def test_time_series_folds_never_split_equal_timestamps(tmp_path):
         params=[str(dataset_path)],
     )
 
-    evaluator = LogisticRegressionFitness(
+    evaluator = RandomForestFitness(
         FeatureMaterializer(
             {
                 "merchant_id": np.ones(12, dtype=np.int64),
@@ -150,7 +154,7 @@ def test_fitness_rejects_a_temporal_fit_without_two_classes(tmp_path):
     )
 
     with pytest.raises(ValueError, match="at least two target classes"):
-        LogisticRegressionFitness(materializer, dataset_path)
+        RandomForestFitness(materializer, dataset_path)
 
 
 def test_residual_evaluator_scores_brier_improvement_over_each_fold_baseline(tmp_path):
@@ -342,7 +346,7 @@ def test_objective_vector_returns_fold_scores_and_materialization_time(tmp_path)
         "amount": np.arange(12, dtype=np.float64) % 2,
     }
     materializer = FeatureMaterializer(columns)
-    evaluator = LogisticRegressionFitness(materializer, dataset_path)
+    evaluator = RandomForestFitness(materializer, dataset_path)
     spec = TxFeature("mean", "amount", 1, "row")
     evaluator.prepare_population([spec])
 
@@ -412,7 +416,7 @@ def test_objective_vector_raises_on_single_class_validation_fold(tmp_path):
         """,
         params=[str(dataset_path)],
     )
-    evaluator = LogisticRegressionFitness(
+    evaluator = RandomForestFitness(
         FeatureMaterializer(
             {
                 "merchant_id": np.ones(5, dtype=np.int64),

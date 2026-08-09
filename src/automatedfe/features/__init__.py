@@ -51,7 +51,7 @@ from .final_evaluation import (
 )
 from .fitness import (
     FitnessEvaluator,
-    LogisticRegressionFitness,
+    RandomForestFitness,
     ResidualEvaluator,
     ResidualFitness,
 )
@@ -153,7 +153,7 @@ __all__ = [
     "FinalEvaluator",
     "FitnessEvaluator",
     "Log",
-    "LogisticRegressionFitness",
+    "RandomForestFitness",
     "MaterializingGeneticProgramming",
     "MaxAmount",
     "MeanAmount",
