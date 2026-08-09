@@ -7,9 +7,12 @@ import pytest
 
 import automatedfe.features.feature_materialization as feature_materialization
 from automatedfe.features import (
+    CountTotal,
     FeatureMaterializer,
     RowWindow,
+    Sub,
     TxFeature,
+    collect_features,
     materialize_feature,
 )
 from automatedfe.transaction_materialization import (
@@ -282,6 +285,41 @@ def test_event_features_are_cached_on_disk_and_reused_across_runs(tmp_path):
     second = FeatureMaterializer(columns, features_dir=features_dir)
     cached = second.materialize_for_events(spec, events_merchants, events_timestamps)
     np.testing.assert_allclose(cached, [50.0, 90.0])
+
+
+def test_only_primitive_features_are_cached_on_disk(tmp_path):
+    hour = 3600 * 1_000_000
+    columns = {
+        "merchant_id": np.array([1, 1, 1, 2, 2], dtype=np.int64),
+        "created_at": np.array([0, 2 * hour, 3 * hour, 0, 5 * hour], dtype=np.int64),
+        "amount": np.array([10.0, 20.0, 30.0, 40.0, 50.0]),
+    }
+    events_merchants = np.array([1, 2], dtype=np.int64)
+    events_timestamps = np.array([4 * hour, 6 * hour], dtype=np.int64)
+    expression = Sub(CountTotal(0), CountTotal(1))
+    dependencies = {feature.name for feature in collect_features(expression)}
+    features_dir = tmp_path / "features"
+
+    first = FeatureMaterializer(columns, features_dir=features_dir)
+    values = first.materialize_for_events(
+        expression, events_merchants, events_timestamps
+    )
+    np.testing.assert_allclose(values, [-2.0, -1.0])
+
+    cached = {path.name for path in features_dir.iterdir()}
+    assert cached == {
+        f"{name}.events.mmap" for name in dependencies
+    } | {f"{name}.events.json" for name in dependencies}
+    assert not any(str(expression) in name for name in cached)
+
+    # A fresh materializer recomputes the composed feature from the cached
+    # primitives without persisting it again.
+    second = FeatureMaterializer(columns, features_dir=features_dir)
+    recomputed = second.materialize_for_events(
+        expression, events_merchants, events_timestamps
+    )
+    np.testing.assert_allclose(recomputed, values)
+    assert {path.name for path in features_dir.iterdir()} == cached
 
 
 def test_event_feature_disk_cache_invalidates_on_event_set_change(tmp_path):
