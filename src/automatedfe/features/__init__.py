@@ -35,6 +35,7 @@ from .feature_spec import (
 )
 from .feature_types import TxFeature
 from .final_evaluation import FinalEvaluationResult, FinalEvaluator, TEST_SPLIT
+from .archive import ArchiveStep
 from .fitness import (
     FitnessEvaluator,
     LogisticRegressionFitness,
@@ -92,6 +93,7 @@ __all__ = [
     "Agg",
     "Aggregation",
     "AmountAgg",
+    "ArchiveStep",
     "ArithmeticOp",
     "AvgDailyAmount",
     "AvgDailyAmountCategory",
