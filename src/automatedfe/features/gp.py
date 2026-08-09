@@ -3,27 +3,94 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from os import PathLike
+from time import monotonic_ns
 
 from geneticengine.algorithms.gp.gp import (
     GeneticProgramming,
     GeneticProgrammingTwoPhase,
 )
+from geneticengine.algorithms.gp.population import Population
+from geneticengine.algorithms.gp.operators.combinators import ParallelStep, SequenceStep
+from geneticengine.algorithms.gp.operators.crossover import GenericCrossoverStep
+from geneticengine.algorithms.gp.operators.elitism import ElitismStep
+from geneticengine.algorithms.gp.operators.mutation import GenericMutationStep
+from geneticengine.algorithms.gp.operators.novelty import NoveltyStep
+from geneticengine.algorithms.gp.operators.selection import LexicaseSelection
 from geneticengine.evaluation.budget import SearchBudget
+from geneticengine.evaluation import Evaluator
 from geneticengine.evaluation.recorder import CSVSearchRecorder
+from geneticengine.evaluation.sequential import SequentialEvaluator
 from geneticengine.evaluation.tracker import ProgressTracker
-from geneticengine.problems import SingleObjectiveProblem
+from geneticengine.problems import MultiObjectiveProblem, Problem
 from geneticengine.random.sources import NativeRandomSource
 from geneticengine.representations.tree.initializations import MaxDepthDecider
 from geneticengine.representations.tree.treebased import TreeBasedRepresentation
-from geneticengine.solutions.individual import PhenotypicIndividual
+from geneticengine.solutions.individual import Individual, PhenotypicIndividual
 
+from .archive import ArchiveStep
 from .feature_materialization import FeatureMaterializer
 from .fitness import DEFAULT_N_SPLITS, LogisticRegressionFitness, ResidualEvaluator
 from .grammar import build_grammar, collect_features
 
 logger = logging.getLogger(__name__)
+
+
+def _multiobjective_programming_step(archive_step: ArchiveStep) -> SequenceStep:
+    """Build the GP generation pipeline used by archive mode."""
+
+    return SequenceStep(
+        # ArchiveStep receives the already-evaluated current population before
+        # the next generation is produced. This preserves the two-phase
+        # materialization lifecycle.
+        archive_step,
+        ParallelStep(
+            [
+                ElitismStep(),
+                NoveltyStep(),
+                SequenceStep(
+                    LexicaseSelection(epsilon=True),
+                    GenericCrossoverStep(0.01),
+                    GenericMutationStep(0.9),
+                ),
+            ],
+            weights=[5, 5, 90],
+        ),
+    )
+
+
+class ArchiveProgressTracker(ProgressTracker):
+    """Track evaluations without creating Genetic Engine's ParetoFront."""
+
+    def __init__(
+        self,
+        problem: Problem,
+        archive_step: ArchiveStep,
+        *,
+        evaluator: Evaluator | None = None,
+        recorders: list[object] | None = None,
+    ) -> None:
+        self.start_time = monotonic_ns()
+        self.problem = problem
+        self.evaluator = evaluator if evaluator is not None else SequentialEvaluator()
+        self.recorders = [] if recorders is None else recorders
+        self.archive_step = archive_step
+        self.memory = None
+
+    def evaluate(self, individuals: Iterable[Individual]) -> None:
+        for individual in self.evaluator.evaluate_async(self.problem, individuals):
+            is_best = individual in self.archive_step.archive
+            for recorder in self.recorders:
+                recorder.register(
+                    tracker=self,
+                    individual=individual,
+                    problem=self.problem,
+                    is_best=is_best,
+                )
+
+    def get_best_individuals(self) -> list[Individual]:
+        return list(self.archive_step.archive)
 
 
 def build_search_algorithm(
@@ -49,18 +116,22 @@ def build_search_algorithm(
     *feature_cache_dir* stores the event-level feature values (one ``float64``
     per event) computed during the search. Features already present in the
     cache are loaded from disk instead of recomputed, so repeated runs over
-    the same event set reuse previous work. If *dataset_path* is supplied,
-    each generated feature is evaluated on chronological cross-validation
-    folds. The default metrics use a fresh logistic-regression fit defined by
-    :class:`LogisticRegressionFitness`; ``score_metric='brier_improvement'``
-    (or ``'brier'``) selects the cheap intercept-plus-residual evaluator
-    defined by :class:`ResidualEvaluator`. Leaving it ``None`` preserves the
-    zero-fitness configuration used by materialization-only callers and older
-    experiments.
+    the same event set reuse previous work. Archive mode evaluates each
+    generated feature on exactly three
+    chronological cross-validation folds and uses the resulting objective
+    vector plus materialization time. The default metrics use a fresh
+    logistic-regression fit defined by :class:`LogisticRegressionFitness`;
+    ``score_metric='brier_improvement'`` (or ``'brier'``) selects the cheap
+    intercept-plus-residual evaluator defined by :class:`ResidualEvaluator`.
+    A dataset path is required because this search is always multiobjective.
     """
 
     if population_size <= 0:
         raise ValueError("population_size must be positive")
+    if dataset_path is None:
+        raise ValueError("dataset_path is required for archive search")
+    if n_splits != 3:
+        raise ValueError("Archive mode requires exactly three folds")
     grammar = build_grammar(mapping)
     if max_depth is None:
         max_depth = 4
@@ -73,30 +144,32 @@ def build_search_algorithm(
         grammar,
         MaxDepthDecider(random, grammar, max_depth=max_depth),
     )
-    fitness_evaluator = None
-    if dataset_path is not None:
-        if score_metric in {"brier", "brier_improvement"}:
-            fitness_evaluator = ResidualEvaluator(
-                materializer,
-                dataset_path,
-                n_splits=n_splits,
-                score_metric=score_metric,
-            )
-        else:
-            fitness_evaluator = LogisticRegressionFitness(
-                materializer,
-                dataset_path,
-                n_splits=n_splits,
-                score_metric=score_metric,
-                random_state=fitness_random_state,
-            )
-    problem = SingleObjectiveProblem(
-        fitness_function=(
-            fitness_evaluator if fitness_evaluator is not None else lambda _individual: 0.0
-        ),
-        minimize=False,
+    if score_metric in {"brier", "brier_improvement"}:
+        fitness_evaluator = ResidualEvaluator(
+            materializer,
+            dataset_path,
+            n_splits=n_splits,
+            score_metric=score_metric,
+        )
+    else:
+        fitness_evaluator = LogisticRegressionFitness(
+            materializer,
+            dataset_path,
+            n_splits=n_splits,
+            score_metric=score_metric,
+            random_state=fitness_random_state,
+        )
+    objective_vector = getattr(fitness_evaluator, "objective_vector", None)
+    if not callable(objective_vector):
+        raise TypeError("Archive search requires an objective_vector evaluator")
+    problem = MultiObjectiveProblem(
+        fitness_function=objective_vector,
+        minimize=[False, False, False, True],
     )
-    tracker = None
+    archive_step = ArchiveStep()
+    generation_step = _multiobjective_programming_step(archive_step)
+
+    recorder = None
     if csv_path is not None:
         def _phenotype(individual: PhenotypicIndividual):
             return individual.get_phenotype()
@@ -118,7 +191,11 @@ def build_search_algorithm(
             },
             only_record_best_individuals=False,
         )
-        tracker = ProgressTracker(problem, recorders=[recorder])
+    tracker = ArchiveProgressTracker(
+        problem,
+        archive_step,
+        recorders=[] if recorder is None else [recorder],
+    )
 
     return MaterializingGeneticProgramming(
         problem=problem,
@@ -129,6 +206,8 @@ def build_search_algorithm(
         tracker=tracker,
         materializer=materializer,
         fitness_evaluator=fitness_evaluator,
+        archive_step=archive_step,
+        step=generation_step,
     )
 
 
@@ -139,13 +218,65 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
         self,
         *args: object,
         materializer: FeatureMaterializer,
-        fitness_evaluator: LogisticRegressionFitness | ResidualEvaluator | None = None,
+        fitness_evaluator: LogisticRegressionFitness | ResidualEvaluator,
+        archive_step: ArchiveStep,
         **kwargs: object,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.materializer = materializer
         self.fitness_evaluator = fitness_evaluator
+        self.archive_step = archive_step
+        self.archive = archive_step
         self.last_individuals: list[PhenotypicIndividual] = []
+
+    def perform_search(self) -> list[Individual] | None:
+        generation = 0
+        current_individuals = self._generate_initial_individuals()
+        self.precompute_population(current_individuals, generation)
+        current_individuals = list(
+            self.archive_step.apply(
+                self.problem,
+                self.tracker.evaluator,
+                self.representation,
+                self.random,
+                iter(current_individuals),
+                len(current_individuals),
+                generation,
+            )
+        )
+        current_population = Population(
+            iter(current_individuals),
+            self.tracker,
+            generation=generation,
+        )
+
+        while not self.is_done():
+            generation += 1
+            next_individuals = self._generate_next_individuals(
+                current_population.get_individuals(),
+                generation,
+            )
+            self.precompute_population(next_individuals, generation)
+            current_population = Population(
+                iter(next_individuals),
+                self.tracker,
+                generation,
+            )
+
+        # The step runs before generation production, so explicitly archive
+        # the final evaluated population after the budget stops the loop.
+        list(
+            self.archive_step.apply(
+                self.problem,
+                self.tracker.evaluator,
+                self.representation,
+                self.random,
+                iter(current_population.get_individuals()),
+                len(current_population.get_individuals()),
+                generation,
+            )
+        )
+        return list(self.archive_step.archive)
 
     def precompute_population(
         self,
@@ -154,9 +285,8 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
     ) -> None:
         """Prepare the already-generated individuals before evaluation.
 
-        With a fitness evaluator, only the event-level feature values are
-        prepared (computed and cached on disk); the per-transaction feature
-        pass runs exclusively in the materialization-only configuration.
+        The evaluator prepares the event-level feature values, which are
+        computed and cached on disk before the population is evaluated.
         """
 
         self.last_individuals = list(individuals)
@@ -166,10 +296,7 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
             generation,
             len(phenotypes),
         )
-        if self.fitness_evaluator is not None:
-            self.fitness_evaluator.prepare_population(phenotypes)
-        else:
-            self.materializer.materialize_population(phenotypes)
+        self.fitness_evaluator.prepare_population(phenotypes)
 
 
 __all__ = [
