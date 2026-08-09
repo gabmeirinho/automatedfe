@@ -7,10 +7,14 @@ from geneticengine.evaluation.budget import EvaluationBudget
 
 import automatedfe.features.gp as gp_module
 from automatedfe.features import (
+    ArchiveStep,
     MaterializingGeneticProgramming,
     build_search_algorithm,
     expr,
 )
+from geneticengine.algorithms.gp.operators.combinators import ParallelStep, SequenceStep
+from geneticengine.algorithms.gp.operators.selection import LexicaseSelection
+from geneticengine.problems import MultiObjectiveProblem
 
 LABEL_MAPPING = {
     "status": {"approved": 0, "complete": 1},
@@ -19,6 +23,24 @@ LABEL_MAPPING = {
     "card_brand": {"visa": 0},
     "document_type": {"cpf": 0},
 }
+
+
+@pytest.fixture
+def archive_dataset(tmp_path, monkeypatch):
+    class RecordingObjectiveEvaluator:
+        def __init__(self, materializer, dataset_path, **kwargs):
+            self.materializer = materializer
+            self.dataset_path = dataset_path
+            self.kwargs = kwargs
+
+        def prepare_population(self, individuals):
+            pass
+
+        def objective_vector(self, individual):
+            return [0.0, 0.0, 0.0, 0.0]
+
+    monkeypatch.setattr(gp_module, "LogisticRegressionFitness", RecordingObjectiveEvaluator)
+    return tmp_path / "dataset.parquet"
 
 
 def write_mmap_fixture(path):
@@ -49,13 +71,14 @@ def write_mmap_fixture(path):
     return path
 
 
-def test_search_uses_the_complete_grammar_and_default_depth(tmp_path):
+def test_search_uses_the_complete_grammar_and_default_depth(tmp_path, archive_dataset):
     budget = EvaluationBudget(10)
     algorithm = build_search_algorithm(
         budget,
         mapping=LABEL_MAPPING,
         population_size=10,
         seed=123,
+        dataset_path=archive_dataset,
         mmap_dir=write_mmap_fixture(tmp_path / "mmap"),
     )
 
@@ -67,7 +90,7 @@ def test_search_uses_the_complete_grammar_and_default_depth(tmp_path):
     assert algorithm.tracker.get_number_evaluations() == 10
 
 
-def test_mmap_dir_is_passed_to_feature_materializer(tmp_path, monkeypatch):
+def test_mmap_dir_is_passed_to_feature_materializer(tmp_path, monkeypatch, archive_dataset):
     captured = {}
 
     class RecordingMaterializer:
@@ -88,6 +111,7 @@ def test_mmap_dir_is_passed_to_feature_materializer(tmp_path, monkeypatch):
         mapping=LABEL_MAPPING,
         mmap_dir=mmap_dir,
         feature_cache_dir=feature_cache_dir,
+        dataset_path=archive_dataset,
     )
 
     assert captured == {
@@ -98,7 +122,7 @@ def test_mmap_dir_is_passed_to_feature_materializer(tmp_path, monkeypatch):
     assert isinstance(algorithm.materializer, RecordingMaterializer)
 
 
-def test_tracker_records_every_evaluation_to_csv(tmp_path):
+def test_tracker_records_every_evaluation_to_csv(tmp_path, archive_dataset):
     csv_path = tmp_path / "gp_search.csv"
     algorithm = build_search_algorithm(
         EvaluationBudget(10),
@@ -106,6 +130,7 @@ def test_tracker_records_every_evaluation_to_csv(tmp_path):
         population_size=10,
         seed=123,
         csv_path=csv_path,
+        dataset_path=archive_dataset,
         mmap_dir=write_mmap_fixture(tmp_path / "mmap"),
     )
 
@@ -119,13 +144,14 @@ def test_tracker_records_every_evaluation_to_csv(tmp_path):
     assert all(row["Expression"] and row["Dependencies"] for row in rows)
 
 
-def test_complete_grammar_search_materializes_a_population(tmp_path):
+def test_complete_grammar_search_materializes_a_population(tmp_path, archive_dataset):
     algorithm = build_search_algorithm(
         EvaluationBudget(4),
         mapping=LABEL_MAPPING,
         population_size=4,
         seed=123,
         csv_path=tmp_path / "complete_gp_search.csv",
+        dataset_path=archive_dataset,
         mmap_dir=write_mmap_fixture(tmp_path / "mmap"),
     )
 
@@ -136,12 +162,13 @@ def test_complete_grammar_search_materializes_a_population(tmp_path):
     assert len(algorithm.last_individuals) == algorithm.population_size
 
 
-def test_search_tracks_the_final_generated_population(tmp_path):
+def test_search_tracks_the_final_generated_population(tmp_path, archive_dataset):
     algorithm = build_search_algorithm(
         EvaluationBudget(10),
         mapping=LABEL_MAPPING,
         population_size=10,
         seed=123,
+        dataset_path=archive_dataset,
         mmap_dir=write_mmap_fixture(tmp_path / "mmap"),
     )
 
@@ -160,13 +187,23 @@ def test_search_requires_a_positive_population_size(tmp_path):
         )
 
 
-def test_search_materializes_the_complete_initial_population(tmp_path):
+def test_search_requires_a_dataset_for_archive_mode(tmp_path):
+    with pytest.raises(ValueError, match="dataset_path is required"):
+        build_search_algorithm(
+            EvaluationBudget(1),
+            mapping=LABEL_MAPPING,
+            mmap_dir=tmp_path / "mmap",
+        )
+
+
+def test_search_materializes_the_complete_initial_population(tmp_path, archive_dataset):
     algorithm = build_search_algorithm(
         EvaluationBudget(10),
         mapping=LABEL_MAPPING,
         population_size=10,
         seed=123,
         csv_path=tmp_path / "gp_search.csv",
+        dataset_path=archive_dataset,
         mmap_dir=write_mmap_fixture(tmp_path / "mmap"),
     )
 
@@ -178,18 +215,20 @@ def test_search_materializes_the_complete_initial_population(tmp_path):
     assert {row["Generation"] for row in rows} == {"0"}
 
 
-def test_search_defaults_every_fitness_to_zero(tmp_path):
+def test_search_uses_four_objective_fitness(tmp_path, archive_dataset):
     algorithm = build_search_algorithm(
         EvaluationBudget(4),
         mapping=LABEL_MAPPING,
         population_size=4,
+        dataset_path=archive_dataset,
         mmap_dir=write_mmap_fixture(tmp_path / "mmap"),
     )
     best = algorithm.search()
 
     assert algorithm.tracker.get_number_evaluations() == 4
     assert isinstance(best[0].get_phenotype(), expr)
-    assert best[0].get_fitness(algorithm.problem).fitness_components == [0.0]
+    assert isinstance(algorithm.problem, MultiObjectiveProblem)
+    assert best[0].get_fitness(algorithm.problem).fitness_components == [0.0] * 4
 
 
 def test_brier_improvement_selects_residual_evaluator(tmp_path, monkeypatch):
@@ -206,6 +245,9 @@ def test_brier_improvement_selects_residual_evaluator(tmp_path, monkeypatch):
 
         def __call__(self, individual):
             return 0.0
+
+        def objective_vector(self, individual):
+            return [0.0, 0.0, 0.0, 0.0]
 
     monkeypatch.setattr(gp_module, "ResidualEvaluator", RecordingResidualEvaluator)
     mmap_dir = write_mmap_fixture(tmp_path / "mmap")
@@ -227,7 +269,52 @@ def test_brier_improvement_selects_residual_evaluator(tmp_path, monkeypatch):
     }
 
 
-def test_same_seed_produces_same_initial_population_and_results(tmp_path):
+def test_dataset_search_uses_one_archive_step_and_returns_initial_archive(
+    tmp_path,
+    monkeypatch,
+):
+    class RecordingObjectiveEvaluator:
+        def __init__(self, materializer, dataset_path, **kwargs):
+            self.materializer = materializer
+            self.dataset_path = dataset_path
+            self.kwargs = kwargs
+
+        def prepare_population(self, individuals):
+            pass
+
+        def objective_vector(self, individual):
+            return [0.5, 0.5, 0.5, 0.01]
+
+    monkeypatch.setattr(gp_module, "LogisticRegressionFitness", RecordingObjectiveEvaluator)
+    algorithm = build_search_algorithm(
+        EvaluationBudget(4),
+        mapping=LABEL_MAPPING,
+        population_size=4,
+        seed=123,
+        mmap_dir=write_mmap_fixture(tmp_path / "mmap"),
+        dataset_path=tmp_path / "dataset.parquet",
+    )
+
+    assert isinstance(algorithm.problem, MultiObjectiveProblem)
+    assert algorithm.problem.minimize == [False, False, False, True]
+    assert isinstance(algorithm.archive, ArchiveStep)
+    assert isinstance(algorithm.step, SequenceStep)
+    assert algorithm.step.steps[0] is algorithm.archive
+    generation_pipeline = algorithm.step.steps[1]
+    assert isinstance(generation_pipeline, ParallelStep)
+    reproduction = generation_pipeline.steps[2]
+    assert isinstance(reproduction, SequenceStep)
+    assert isinstance(reproduction.steps[0], LexicaseSelection)
+    assert reproduction.steps[0].epsilon
+    assert algorithm.tracker.memory is None
+
+    result = algorithm.search()
+
+    assert result == algorithm.archive.archive
+    assert len(result) == algorithm.population_size
+
+
+def test_same_seed_produces_same_initial_population_and_results(tmp_path, archive_dataset):
     mmap_dir = write_mmap_fixture(tmp_path / "mmap")
 
     def build(seed, *, csv_path=None):
@@ -237,6 +324,7 @@ def test_same_seed_produces_same_initial_population_and_results(tmp_path):
             population_size=10,
             seed=seed,
             csv_path=csv_path,
+            dataset_path=archive_dataset,
             mmap_dir=mmap_dir,
         )
 

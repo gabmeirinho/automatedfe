@@ -56,6 +56,20 @@ def _primitive_feature(individual: TxFeature | Any) -> TxFeature:
     return feature
 
 
+def _is_primitive(individual: TxFeature | Any) -> bool:
+    """Whether *individual* is a baseline feature worth caching on disk.
+
+    Composed expressions (non-terminals and category rates) are recomputed
+    from their cached primitive dependencies instead of being persisted.
+    """
+
+    try:
+        _primitive_feature(individual)
+    except TypeError:
+        return False
+    return True
+
+
 def _primitive_dependencies(individual: Any) -> set[TxFeature]:
     from .grammar import collect_features
 
@@ -223,7 +237,7 @@ class FeatureMaterializer:
         result = self.materialize_for_events_with_duration(
             individual, event_merchants, event_timestamps
         )[0]
-        if self.output_dir is not None:
+        if self.output_dir is not None and _is_primitive(individual):
             self.output_dir.mkdir(parents=True, exist_ok=True)
             path = self.output_dir / f"{_cache_stem(name)}{FEATURE_MMAP_SUFFIX}"
             mapped = np.memmap(path, dtype=np.float64, mode="w+", shape=result.shape)
@@ -328,31 +342,49 @@ class FeatureMaterializer:
             )
         )
 
-    def _materialize_expression(
+    def _materialize_for_events(
         self,
-        individual: Any,
+        individual: TxFeature | Any,
         event_merchants: np.ndarray,
         event_timestamps: np.ndarray,
-    ) -> np.ndarray:
-        feature_values = {
-            feature.name: self._materialize_primitive_for_events(
-                feature, event_merchants, event_timestamps
-            )
-            for feature in _primitive_dependencies(individual)
-        }
-        return np.asarray(individual.evaluate(feature_values), dtype=np.float64)
+    ) -> tuple[np.ndarray, float]:
+        """Materialize one individual, checking the disk cache for its terminals.
+
+        Only terminal features are cached on disk. Composed expressions are
+        recomputed from their cached terminal dependencies.
+        """
+
+        try:
+            feature = _primitive_feature(individual)
+        except TypeError:
+            feature = None
+        if feature is None:
+            started = time.monotonic()
+            feature_values = {
+                dependency.name: self._materialize_primitive_for_events(
+                    dependency, event_merchants, event_timestamps
+                )[0]
+                for dependency in _primitive_dependencies(individual)
+            }
+            values = np.asarray(individual.evaluate(feature_values), dtype=np.float64)
+            return values, time.monotonic() - started
+        return self._materialize_primitive_for_events(
+            feature, event_merchants, event_timestamps
+        )
 
     def _materialize_primitive_for_events(
         self,
         feature: TxFeature,
         event_merchants: np.ndarray,
         event_timestamps: np.ndarray,
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, float]:
+        """Materialize one terminal feature, reusing the disk cache when possible."""
+
         name = feature.name
         cache_key = (name, id(event_merchants), id(event_timestamps))
         cached = self._event_cache.get(cache_key)
         if cached is not None:
-            return cached[2]
+            return cached[2], cached[3]
 
         loaded = self._load_event_feature(name, event_merchants, event_timestamps)
         if loaded is not None:
@@ -376,7 +408,7 @@ class FeatureMaterializer:
             values,
             duration,
         )
-        return values
+        return values, duration
 
     def materialize_for_events(
         self,
@@ -398,9 +430,8 @@ class FeatureMaterializer:
     ) -> tuple[np.ndarray, float]:
         """Materialize an individual at each event row.
 
-        Returns ``(values, duration)`` where the duration is the monotonic
-        wall-clock time of the top-level materialization. In-memory and disk
-        cache hits reuse the originally recorded duration unchanged.
+        Returns ``(values, duration)``. Only terminal features check the disk
+        cache; composed expressions are evaluated from their cached terminals.
         """
 
         event_merchants = np.asarray(event_merchants, dtype=np.int64)
@@ -411,25 +442,9 @@ class FeatureMaterializer:
         if cached is not None:
             return cached[2], cached[3]
 
-        started = time.monotonic()
-        loaded = self._load_event_feature(name, event_merchants, event_timestamps)
-        if loaded is not None:
-            values, duration = loaded
-        else:
-            try:
-                feature = _primitive_feature(individual)
-            except TypeError:
-                values = self._materialize_expression(
-                    individual, event_merchants, event_timestamps
-                )
-            else:
-                values = self._materialize_primitive_for_events(
-                    feature, event_merchants, event_timestamps
-                )
-            duration = time.monotonic() - started
-            self._store_event_feature(
-                name, event_merchants, event_timestamps, values, duration
-            )
+        values, duration = self._materialize_for_events(
+            individual, event_merchants, event_timestamps
+        )
         self._event_cache[cache_key] = (
             event_merchants,
             event_timestamps,
