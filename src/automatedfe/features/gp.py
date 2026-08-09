@@ -187,7 +187,14 @@ def build_search_algorithm(
                 "Generation": lambda _t, individual, _p: individual.metadata["generation"],
                 "Expression": lambda _t, individual, _p: str(_phenotype(individual)),
                 "Dependencies": lambda _t, individual, _p: _dependencies(individual),
+                # Keep the historical single-objective "Fitness" column first so
+                # existing consumers keep working, then expose the full four-objective
+                # vector used by archive search.
                 "Fitness": lambda _t, individual, p: individual.get_fitness(p).fitness_components[0],
+                "Split1": lambda _t, individual, p: individual.get_fitness(p).fitness_components[0],
+                "Split2": lambda _t, individual, p: individual.get_fitness(p).fitness_components[1],
+                "Split3": lambda _t, individual, p: individual.get_fitness(p).fitness_components[2],
+                "MaterializationTime": lambda _t, individual, p: individual.get_fitness(p).fitness_components[3],
             },
             only_record_best_individuals=False,
         )
