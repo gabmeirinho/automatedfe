@@ -29,7 +29,7 @@ DEFAULT_N_SPLITS = 3
 DEFAULT_RANDOM_STATE = 42
 DEFAULT_MAX_ITERATIONS = 1_000
 RESIDUAL_TREE_PARAMS = {
-    "max_depth": 4,
+    "max_depth": 1,
     "min_samples_leaf": 150,
     "random_state": DEFAULT_RANDOM_STATE,
 }
@@ -147,8 +147,13 @@ def _time_series_splits(
     return tuple(splits)
 
 
-class LogisticRegressionFitness:
-    """Materialize one feature and score it with chronological cross-validation."""
+class ChronologicalFoldEvaluator:
+    """Shared chronological-fold evaluation for generated features.
+
+    Subclasses implement :meth:`_score_folds`; everything else — event
+    materialization, caching, the scalar callable, and the multi-objective
+    vector — lives here.
+    """
 
     def __init__(
         self,
@@ -156,25 +161,22 @@ class LogisticRegressionFitness:
         dataset_path: str | PathLike[str],
         *,
         n_splits: int = DEFAULT_N_SPLITS,
-        score_metric: str = "roc_auc",
-        random_state: int = DEFAULT_RANDOM_STATE,
-        max_iter: int = DEFAULT_MAX_ITERATIONS,
+        require_two_classes: bool = False,
     ) -> None:
         if n_splits < 2:
             raise ValueError("n_splits must be at least 2")
-        if score_metric not in {"accuracy", "roc_auc"}:
-            raise ValueError("score_metric must be 'accuracy' or 'roc_auc'")
 
         self.materializer = materializer
         self.dataset_path = Path(dataset_path).resolve()
         self.n_splits = n_splits
-        self.score_metric = score_metric
-        self.random_state = random_state
-        self.max_iter = max_iter
-        self.event_merchants, self.event_timestamps, self.labels = _load_ordered_events(
-            self.dataset_path
+        (
+            self.event_merchants,
+            self.event_timestamps,
+            self.labels,
+        ) = _load_ordered_events(
+            self.dataset_path,
+            require_two_classes=require_two_classes,
         )
-        self.last_model: LogisticRegression | None = None
         try:
             self.cv_splits = _time_series_splits(self.event_timestamps, n_splits)
         except ValueError as error:
@@ -186,15 +188,12 @@ class LogisticRegressionFitness:
                 ) from error
             raise
 
-        for fit_indices, _ in self.cv_splits:
-            if np.unique(self.labels[fit_indices]).size < 2:
-                raise ValueError("Chronological fit rows must contain at least two target classes")
-
         # Keep the historical single-fold attributes pointing at the final,
         # latest fold.  ``cv_splits`` contains all folds used for scoring.
         self.fit_indices, self.validation_indices = self.cv_splits[-1]
         self.fold_scores: list[float] = []
-        self.last_models: list[LogisticRegression] = []
+        self.last_models: list[Any] = []
+        self.last_model: Any = None
 
     def _values_for(self, individual: Any) -> np.ndarray:
         return self.materializer.materialize_for_events(
@@ -233,6 +232,42 @@ class LogisticRegressionFitness:
         values, duration = self._timed_values_for(individual)
         fold_scores = self._score_folds(values, individual)
         return [*fold_scores, float(duration)]
+
+    def _score_folds(self, values: np.ndarray, individual: Any) -> list[float]:
+        raise NotImplementedError
+
+    evaluate = __call__
+
+
+class LogisticRegressionFitness(ChronologicalFoldEvaluator):
+    """Materialize one feature and score it with chronological cross-validation."""
+
+    def __init__(
+        self,
+        materializer: FeatureMaterializer,
+        dataset_path: str | PathLike[str],
+        *,
+        n_splits: int = DEFAULT_N_SPLITS,
+        score_metric: str = "roc_auc",
+        random_state: int = DEFAULT_RANDOM_STATE,
+        max_iter: int = DEFAULT_MAX_ITERATIONS,
+    ) -> None:
+        if score_metric not in {"accuracy", "roc_auc"}:
+            raise ValueError("score_metric must be 'accuracy' or 'roc_auc'")
+
+        super().__init__(
+            materializer,
+            dataset_path,
+            n_splits=n_splits,
+            require_two_classes=True,
+        )
+        self.score_metric = score_metric
+        self.random_state = random_state
+        self.max_iter = max_iter
+
+        for fit_indices, _ in self.cv_splits:
+            if np.unique(self.labels[fit_indices]).size < 2:
+                raise ValueError("Chronological fit rows must contain at least two target classes")
 
     def _score_folds(self, values: np.ndarray, individual: Any) -> list[float]:
         values = np.asarray(values).reshape(-1, 1)
@@ -275,10 +310,8 @@ class LogisticRegressionFitness:
         self.last_model = self.last_models[-1]
         return self.fold_scores
 
-    evaluate = __call__
 
-
-class ResidualEvaluator:
+class ResidualEvaluator(ChronologicalFoldEvaluator):
     """Score a candidate by its out-of-sample improvement over a baseline.
 
     Each chronological fold starts with an intercept-only model in logit
@@ -301,81 +334,34 @@ class ResidualEvaluator:
         n_splits: int = DEFAULT_N_SPLITS,
         score_metric: str = "brier_improvement",
     ) -> None:
-        if n_splits < 2:
-            raise ValueError("n_splits must be at least 2")
         if score_metric not in {"brier", "brier_improvement"}:
             raise ValueError(
                 "score_metric must be 'brier_improvement' or 'brier'"
             )
-        self.materializer = materializer
-        self.dataset_path = Path(dataset_path).resolve()
-        self.n_splits = n_splits
+
+        super().__init__(
+            materializer,
+            dataset_path,
+            n_splits=n_splits,
+            require_two_classes=False,
+        )
         # ``brier`` is accepted as a short spelling, but the score is always
         # an improvement so that higher fitness remains better for GP.
         self.score_metric = "brier_improvement"
-        (
-            self.event_merchants,
-            self.event_timestamps,
-            self.labels,
-        ) = _load_ordered_events(self.dataset_path, require_two_classes=False)
         unique_labels = np.unique(self.labels)
         if not np.all(np.isin(unique_labels, (0, 1))):
             raise ValueError("Residual evaluation requires binary target labels")
         if unique_labels.size < 2:
             raise ValueError("Residual evaluation requires at least two target classes")
         self.labels = self.labels.astype(np.float64, copy=False)
-        self.cv_splits = _time_series_splits(self.event_timestamps, n_splits)
 
-        # Keep the same convenient single-fold attributes as the existing
-        # evaluator, while exposing all fold diagnostics for the residual path.
-        self.fit_indices, self.validation_indices = self.cv_splits[-1]
-        self.fold_scores: list[float] = []
+        # Expose all fold diagnostics for the residual path.
         self.fold_baselines: list[float] = []
         self.fold_baseline_brier_scores: list[float] = []
         self.fold_corrected_brier_scores: list[float] = []
-        self.last_models: list[DecisionTreeRegressor | None] = []
-        self.last_model: DecisionTreeRegressor | None = None
         self.last_training_residuals: list[np.ndarray] = []
         self.last_training_weights: list[np.ndarray] = []
         self.last_validation_predictions: list[np.ndarray] = []
-
-    def _values_for(self, individual: Any) -> np.ndarray:
-        return self.materializer.materialize_for_events(
-            individual,
-            self.event_merchants,
-            self.event_timestamps,
-        )
-
-    def _timed_values_for(self, individual: Any) -> tuple[np.ndarray, float]:
-        return self.materializer.materialize_for_events_with_duration(
-            individual,
-            self.event_merchants,
-            self.event_timestamps,
-        )
-
-    def prepare_population(self, individuals: Sequence[Any]) -> None:
-        """Calculate and cache every candidate signal before evaluation."""
-
-        for individual in individuals:
-            self._values_for(individual)
-
-    def __call__(self, individual: Any) -> float:
-        fold_scores = self._score_folds(self._values_for(individual), individual)
-        return float(np.mean(fold_scores))
-
-    def objective_vector(self, individual: Any) -> list[float]:
-        """Score every chronological fold and return the objective vector.
-
-        Returns ``[split1, split2, split3, materialization_duration]``: the
-        per-fold scores followed by the cached wall-clock materialization
-        duration in seconds. The first three objectives maximize and the
-        duration minimizes. A vector containing a non-finite entry marks an
-        invalid result that callers must exclude.
-        """
-
-        values, duration = self._timed_values_for(individual)
-        fold_scores = self._score_folds(values, individual)
-        return [*fold_scores, float(duration)]
 
     def _score_folds(self, values: np.ndarray, individual: Any) -> list[float]:
         values = np.asarray(values).reshape(-1, 1)
@@ -458,8 +444,6 @@ class ResidualEvaluator:
 
         self.last_model = self.last_models[-1]
         return self.fold_scores
-
-    evaluate = __call__
 
 
 ResidualFitness = ResidualEvaluator
