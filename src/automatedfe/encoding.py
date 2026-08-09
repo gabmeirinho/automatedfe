@@ -16,12 +16,10 @@ import duckdb
 
 from .sorting import (
     DEFAULT_DATASET_INPUT,
-    DEFAULT_OUTPUT as DEFAULT_INPUT,
     DUCKDB_MEMORY_LIMIT,
     PROJECT_ROOT,
 )
 
-DEFAULT_OUTPUT = DEFAULT_INPUT
 DEFAULT_MAPPING_OUTPUT = (
     PROJECT_ROOT / "data" / "loan" / "transformed" / "label_mapping.json"
 )
@@ -239,9 +237,7 @@ def encode_transactions(
 __all__ = [
     "CATEGORICAL_COLUMNS",
     "DEFAULT_DATASET_INPUT",
-    "DEFAULT_INPUT",
     "DEFAULT_MAPPING_OUTPUT",
-    "DEFAULT_OUTPUT",
     "DUCKDB_MEMORY_LIMIT",
     "PROJECT_ROOT",
     "TRAIN_SPLIT",
