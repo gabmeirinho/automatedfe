@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Mapping
 from os import PathLike
+from pathlib import Path
 from time import monotonic_ns
 
 from geneticengine.algorithms.gp.gp import (
@@ -100,6 +101,7 @@ def build_search_algorithm(
     population_size: int = 20,
     seed: int = 42,
     csv_path: str | PathLike[str] | None = None,
+    archive_path: str | PathLike[str] | None = None,
     mmap_dir: str | PathLike[str],
     feature_cache_dir: str | PathLike[str] | None = None,
     dataset_path: str | PathLike[str] | None = None,
@@ -124,6 +126,8 @@ def build_search_algorithm(
     ``score_metric='brier_improvement'`` (or ``'brier'``) selects the cheap
     intercept-plus-residual evaluator defined by :class:`ResidualEvaluator`.
     A dataset path is required because this search is always multiobjective.
+    When *archive_path* is supplied, the current strict Pareto front is saved
+    atomically as a JSON snapshot after each completed generation.
     """
 
     if population_size <= 0:
@@ -166,7 +170,14 @@ def build_search_algorithm(
         fitness_function=objective_vector,
         minimize=[False, False, False, True],
     )
-    archive_step = ArchiveStep()
+    if archive_path is not None:
+        resolved_archive_path = Path(archive_path).resolve()
+        if resolved_archive_path.exists() and resolved_archive_path.is_dir():
+            raise ValueError(
+                "archive_path must identify a file, not a directory: "
+                f"{resolved_archive_path}"
+            )
+    archive_step = ArchiveStep(archive_path=archive_path, mapping=mapping)
     generation_step = _multiobjective_programming_step(archive_step)
 
     recorder = None

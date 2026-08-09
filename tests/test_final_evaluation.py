@@ -4,8 +4,13 @@ import duckdb
 import numpy as np
 import polars as pl
 import pytest
+from geneticengine.evaluation.sequential import SequentialEvaluator
+from geneticengine.problems import Fitness, MultiObjectiveProblem
+from geneticengine.solutions.individual import ConcreteIndividual
 
 from automatedfe.features import (
+    ArchiveSnapshot,
+    ArchiveStep,
     FeatureMaterializer,
     FinalEvaluator,
     MeanAmount,
@@ -13,6 +18,14 @@ from automatedfe.features import (
     TxFeature,
 )
 from automatedfe.features.final_evaluation import FinalEvaluationResult
+
+LABEL_MAPPING = {
+    "status": {"approved": 0, "complete": 1},
+    "capture_method": {"contactless": 0},
+    "payment_method": {"credit": 0},
+    "card_brand": {"visa": 0},
+    "document_type": {"cpf": 0},
+}
 
 
 def write_train_test_dataset(path, *, uniform_test_label=None):
@@ -57,6 +70,40 @@ def build_materializer(n_transactions):
             "amount": np.arange(n_transactions, dtype=np.float64) % 2,
         }
     )
+
+
+def build_archive(expressions):
+    scores = {
+        str(expression): (
+            (0.8, 0.8, 0.8, 1.0)
+            if index == 0
+            else (0.9, 0.7, 0.9, 2.0)
+        )
+        for index, expression in enumerate(expressions)
+    }
+    problem = MultiObjectiveProblem(
+        fitness_function=lambda expression: scores[str(expression)],
+        minimize=[False, False, False, True],
+    )
+    individuals = []
+    for expression in expressions:
+        individual = ConcreteIndividual(expression)
+        individual.set_fitness(problem, Fitness(scores[str(expression)]))
+        individuals.append(individual)
+
+    archive = ArchiveStep(mapping=LABEL_MAPPING)
+    list(
+        archive.apply(
+            problem,
+            SequentialEvaluator(),
+            representation=None,
+            random=None,
+            population=iter(individuals),
+            target_size=len(individuals),
+            generation=0,
+        )
+    )
+    return archive
 
 
 def test_final_evaluator_fits_train_and_scores_test(tmp_path):
@@ -134,3 +181,108 @@ def test_final_evaluator_rejects_missing_train_or_test_rows(tmp_path):
 
     with pytest.raises(ValueError, match="no rows in the test split"):
         FinalEvaluator(build_materializer(12), train_only)
+
+
+def test_final_evaluator_accepts_live_and_loaded_archives_in_stable_order(
+    tmp_path,
+    monkeypatch,
+):
+    dataset_path = tmp_path / "dataset.parquet"
+    write_train_test_dataset(dataset_path)
+    expressions = [MeanAmount(1), TotalAmount(2)]
+    live_archive = build_archive(expressions)
+    archive_path = tmp_path / "archive.json"
+    live_archive.save(archive_path)
+
+    evaluator = FinalEvaluator(build_materializer(12), dataset_path)
+    materialized = []
+    original = evaluator.materializer.materialize_for_events
+
+    def recording_materialize(individual, event_merchants, event_timestamps):
+        materialized.append(str(individual))
+        return original(individual, event_merchants, event_timestamps)
+
+    monkeypatch.setattr(
+        evaluator.materializer,
+        "materialize_for_events",
+        recording_materialize,
+    )
+    live_result = evaluator.evaluate(live_archive)
+    loaded_result = evaluator.evaluate(archive_path)
+
+    assert materialized[:2] == [str(expression) for expression in expressions]
+    assert materialized[2:4] == [str(expression) for expression in expressions]
+    assert loaded_result.metrics == live_result.metrics
+    np.testing.assert_array_equal(loaded_result.predictions, live_result.predictions)
+    np.testing.assert_allclose(loaded_result.model.coef_, live_result.model.coef_)
+
+
+def test_final_evaluator_can_be_configured_with_an_archive(tmp_path):
+    dataset_path = tmp_path / "dataset.parquet"
+    write_train_test_dataset(dataset_path)
+    archive = ArchiveSnapshot(
+        version=1,
+        minimize=(False, False, False, True),
+        mapping=LABEL_MAPPING,
+        expressions=(MeanAmount(1),),
+        objectives=((0.8, 0.8, 0.8, 1.0),),
+    )
+
+    result = FinalEvaluator(
+        build_materializer(12),
+        dataset_path,
+        archive=archive,
+    ).evaluate()
+
+    assert result.model.n_features_in_ == 1
+
+
+def test_final_evaluator_rejects_empty_archive(tmp_path):
+    dataset_path = tmp_path / "dataset.parquet"
+    write_train_test_dataset(dataset_path)
+    archive = ArchiveSnapshot(
+        version=1,
+        minimize=(False, False, False, True),
+        mapping=LABEL_MAPPING,
+        expressions=(),
+        objectives=(),
+    )
+
+    evaluator = FinalEvaluator(build_materializer(12), dataset_path)
+    with pytest.raises(ValueError, match="Archive is empty"):
+        evaluator.evaluate(archive)
+
+
+def test_final_evaluator_rejects_incompatible_archive_configuration(tmp_path):
+    dataset_path = tmp_path / "dataset.parquet"
+    write_train_test_dataset(dataset_path)
+    archive = ArchiveSnapshot(
+        version=1,
+        minimize=(True, True, True, True),
+        mapping=LABEL_MAPPING,
+        expressions=(MeanAmount(1),),
+        objectives=((0.8, 0.8, 0.8, 1.0),),
+    )
+
+    evaluator = FinalEvaluator(build_materializer(12), dataset_path)
+    with pytest.raises(ValueError, match="objective directions"):
+        evaluator.evaluate(archive)
+
+
+def test_final_evaluator_validates_loaded_archive_mapping(tmp_path):
+    dataset_path = tmp_path / "dataset.parquet"
+    write_train_test_dataset(dataset_path)
+    archive_path = tmp_path / "archive.json"
+    build_archive([MeanAmount(1)]).save(archive_path)
+    incompatible_mapping = {
+        **LABEL_MAPPING,
+        "status": {"approved": 0, "complete": 7},
+    }
+
+    evaluator = FinalEvaluator(
+        build_materializer(12),
+        dataset_path,
+        mapping=incompatible_mapping,
+    )
+    with pytest.raises(ValueError, match="label mapping is incompatible"):
+        evaluator.evaluate(archive_path)
