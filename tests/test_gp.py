@@ -140,8 +140,50 @@ def test_tracker_records_every_evaluation_to_csv(tmp_path, archive_dataset):
         rows = list(csv.DictReader(csv_file))
 
     assert len(rows) == algorithm.tracker.get_number_evaluations()
-    assert list(rows[0]) == ["Generation", "Expression", "Dependencies", "Fitness"]
+    assert list(rows[0]) == [
+        "Generation",
+        "Expression",
+        "Dependencies",
+        "Fitness",
+        "Split1",
+        "Split2",
+        "Split3",
+        "MaterializationTime",
+    ]
     assert all(row["Expression"] and row["Dependencies"] for row in rows)
+
+
+def test_multiobjective_csv_records_all_four_objectives(tmp_path, monkeypatch):
+    class RecordingObjectiveEvaluator:
+        def __init__(self, materializer, dataset_path, **kwargs):
+            pass
+
+        def prepare_population(self, individuals):
+            pass
+
+        def objective_vector(self, individual):
+            return [0.1, 0.2, 0.3, 0.4]
+
+    monkeypatch.setattr(gp_module, "LogisticRegressionFitness", RecordingObjectiveEvaluator)
+    csv_path = tmp_path / "gp_search.csv"
+    algorithm = build_search_algorithm(
+        EvaluationBudget(4),
+        mapping=LABEL_MAPPING,
+        population_size=4,
+        seed=123,
+        csv_path=csv_path,
+        dataset_path=tmp_path / "dataset.parquet",
+        mmap_dir=write_mmap_fixture(tmp_path / "mmap"),
+    )
+
+    algorithm.search()
+
+    rows = list(csv.DictReader(csv_path.open(newline="")))
+    assert len(rows) == algorithm.tracker.get_number_evaluations()
+    assert all(row["Split1"] == "0.1" for row in rows)
+    assert all(row["Split2"] == "0.2" for row in rows)
+    assert all(row["Split3"] == "0.3" for row in rows)
+    assert all(row["MaterializationTime"] == "0.4" for row in rows)
 
 
 def test_complete_grammar_search_materializes_a_population(tmp_path, archive_dataset):
