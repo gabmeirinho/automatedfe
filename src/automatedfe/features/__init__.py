@@ -42,10 +42,16 @@ from .feature_spec import (
     Window,
 )
 from .feature_types import TxFeature
-from .final_evaluation import TEST_SPLIT, FinalEvaluationResult, FinalEvaluator
+from .final_evaluation import (
+    ARCHIVE_MINIMIZE,
+    ArchiveSource,
+    TEST_SPLIT,
+    FinalEvaluationResult,
+    FinalEvaluator,
+)
 from .fitness import (
     FitnessEvaluator,
-    LogisticRegressionFitness,
+    RandomForestFitness,
     ResidualEvaluator,
     ResidualFitness,
 )
@@ -96,6 +102,8 @@ from .kernels import (
 
 __all__ = [
     "AMOUNT_COLUMN",
+    "ARCHIVE_MINIMIZE",
+    "ArchiveSource",
     "CATEGORY_KINDS",
     "COUNT",
     "CREATED_AT_COLUMN",
@@ -145,7 +153,7 @@ __all__ = [
     "FinalEvaluator",
     "FitnessEvaluator",
     "Log",
-    "LogisticRegressionFitness",
+    "RandomForestFitness",
     "MaterializingGeneticProgramming",
     "MaxAmount",
     "MeanAmount",

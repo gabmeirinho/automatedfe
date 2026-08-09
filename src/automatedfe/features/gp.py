@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Mapping
 from os import PathLike
+from pathlib import Path
 from time import monotonic_ns
 
 from geneticengine.algorithms.gp.gp import (
@@ -31,7 +32,7 @@ from geneticengine.solutions.individual import Individual, PhenotypicIndividual
 
 from .archive import ArchiveStep
 from .feature_materialization import FeatureMaterializer
-from .fitness import DEFAULT_N_SPLITS, LogisticRegressionFitness, ResidualEvaluator
+from .fitness import DEFAULT_N_SPLITS, RandomForestFitness, ResidualEvaluator
 from .grammar import build_grammar, collect_features
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,7 @@ def build_search_algorithm(
     population_size: int = 20,
     seed: int = 42,
     csv_path: str | PathLike[str] | None = None,
+    archive_path: str | PathLike[str] | None = None,
     mmap_dir: str | PathLike[str],
     feature_cache_dir: str | PathLike[str] | None = None,
     dataset_path: str | PathLike[str] | None = None,
@@ -120,10 +122,12 @@ def build_search_algorithm(
     generated feature on exactly three
     chronological cross-validation folds and uses the resulting objective
     vector plus materialization time. The default metrics use a fresh
-    logistic-regression fit defined by :class:`LogisticRegressionFitness`;
+    random-forest fit defined by :class:`RandomForestFitness`;
     ``score_metric='brier_improvement'`` (or ``'brier'``) selects the cheap
     intercept-plus-residual evaluator defined by :class:`ResidualEvaluator`.
     A dataset path is required because this search is always multiobjective.
+    When *archive_path* is supplied, the current strict Pareto front is saved
+    atomically as a JSON snapshot after each completed generation.
     """
 
     if population_size <= 0:
@@ -152,7 +156,7 @@ def build_search_algorithm(
             score_metric=score_metric,
         )
     else:
-        fitness_evaluator = LogisticRegressionFitness(
+        fitness_evaluator = RandomForestFitness(
             materializer,
             dataset_path,
             n_splits=n_splits,
@@ -166,7 +170,14 @@ def build_search_algorithm(
         fitness_function=objective_vector,
         minimize=[False, False, False, True],
     )
-    archive_step = ArchiveStep()
+    if archive_path is not None:
+        resolved_archive_path = Path(archive_path).resolve()
+        if resolved_archive_path.exists() and resolved_archive_path.is_dir():
+            raise ValueError(
+                "archive_path must identify a file, not a directory: "
+                f"{resolved_archive_path}"
+            )
+    archive_step = ArchiveStep(archive_path=archive_path, mapping=mapping)
     generation_step = _multiobjective_programming_step(archive_step)
 
     recorder = None
@@ -225,7 +236,7 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
         self,
         *args: object,
         materializer: FeatureMaterializer,
-        fitness_evaluator: LogisticRegressionFitness | ResidualEvaluator,
+        fitness_evaluator: RandomForestFitness | ResidualEvaluator,
         archive_step: ArchiveStep,
         **kwargs: object,
     ) -> None:

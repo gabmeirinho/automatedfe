@@ -10,8 +10,8 @@ from typing import Any
 
 import duckdb
 import numpy as np
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import brier_score_loss, roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.tree import DecisionTreeRegressor
@@ -27,7 +27,7 @@ DATASET_SPLIT_COLUMN = "split"
 TRAIN_SPLIT = "train"
 DEFAULT_N_SPLITS = 3
 DEFAULT_RANDOM_STATE = 42
-DEFAULT_MAX_ITERATIONS = 1_000
+DEFAULT_N_ESTIMATORS = 50
 RESIDUAL_TREE_PARAMS = {
     "max_depth": 1,
     "min_samples_leaf": 150,
@@ -239,7 +239,7 @@ class ChronologicalFoldEvaluator:
     evaluate = __call__
 
 
-class LogisticRegressionFitness(ChronologicalFoldEvaluator):
+class RandomForestFitness(ChronologicalFoldEvaluator):
     """Materialize one feature and score it with chronological cross-validation."""
 
     def __init__(
@@ -250,7 +250,7 @@ class LogisticRegressionFitness(ChronologicalFoldEvaluator):
         n_splits: int = DEFAULT_N_SPLITS,
         score_metric: str = "roc_auc",
         random_state: int = DEFAULT_RANDOM_STATE,
-        max_iter: int = DEFAULT_MAX_ITERATIONS,
+        n_estimators: int = DEFAULT_N_ESTIMATORS,
     ) -> None:
         if score_metric not in {"accuracy", "roc_auc"}:
             raise ValueError("score_metric must be 'accuracy' or 'roc_auc'")
@@ -263,7 +263,7 @@ class LogisticRegressionFitness(ChronologicalFoldEvaluator):
         )
         self.score_metric = score_metric
         self.random_state = random_state
-        self.max_iter = max_iter
+        self.n_estimators = n_estimators
 
         for fit_indices, _ in self.cv_splits:
             if np.unique(self.labels[fit_indices]).size < 2:
@@ -284,7 +284,12 @@ class LogisticRegressionFitness(ChronologicalFoldEvaluator):
             x_train = imputer.fit_transform(x_train)
             x_validation = imputer.transform(x_validation)
 
-            model = LogisticRegression(max_iter=self.max_iter, random_state=self.random_state)
+            model = RandomForestClassifier(
+                n_estimators=self.n_estimators,
+                random_state=self.random_state,
+                n_jobs=-1,
+                class_weight="balanced_subsample",
+            )
             model.fit(x_train, y_train)
             self.last_models.append(model)
 
@@ -447,18 +452,18 @@ class ResidualEvaluator(ChronologicalFoldEvaluator):
 
 
 ResidualFitness = ResidualEvaluator
-FitnessEvaluator = LogisticRegressionFitness
+FitnessEvaluator = RandomForestFitness
 
 __all__ = [
     "DATASET_MERCHANT_COLUMN",
     "DATASET_SPLIT_COLUMN",
     "DATASET_TARGET_COLUMN",
     "DATASET_TIMESTAMP_COLUMN",
-    "DEFAULT_MAX_ITERATIONS",
+    "DEFAULT_N_ESTIMATORS",
     "DEFAULT_N_SPLITS",
     "DEFAULT_RANDOM_STATE",
     "FitnessEvaluator",
-    "LogisticRegressionFitness",
+    "RandomForestFitness",
     "MIN_LOGIT_WEIGHT",
     "RESIDUAL_EPSILON",
     "RESIDUAL_SHRINKAGE",

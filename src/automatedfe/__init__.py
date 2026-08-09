@@ -7,6 +7,7 @@ from .encoding import (
     fit_label_mapping,
     load_label_mapping,
 )
+from .features.archive import ArchiveSnapshot, ArchiveStep, load_archive
 from .features.feature_materialization import (
     FeatureMaterializer,
     materialize_aggregation,
@@ -15,7 +16,7 @@ from .features.feature_materialization import (
 )
 from .fitness import (
     FitnessEvaluator,
-    LogisticRegressionFitness,
+    RandomForestFitness,
     ResidualEvaluator,
     ResidualFitness,
 )
@@ -42,6 +43,8 @@ from .transaction_materialization import (
 from .validation import first_sorting_violation
 
 __all__ = [
+    "ArchiveSnapshot",
+    "ArchiveStep",
     "CATEGORICAL_COLUMNS",
     "DEFAULT_CARD_TOKENS_INPUT",
     "DEFAULT_DATASET_INPUT",
@@ -55,7 +58,7 @@ __all__ = [
     "PROJECT_ROOT",
     "FeatureMaterializer",
     "FitnessEvaluator",
-    "LogisticRegressionFitness",
+    "RandomForestFitness",
     "ResidualEvaluator",
     "ResidualFitness",
     "column_dtype",
@@ -63,6 +66,7 @@ __all__ = [
     "first_sorting_violation",
     "fit_label_mapping",
     "load_label_mapping",
+    "load_archive",
     "load_mmapped_columns",
     "materialize_aggregation",
     "materialize_feature",

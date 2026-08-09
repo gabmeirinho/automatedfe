@@ -11,6 +11,7 @@ from automatedfe.features import (
     MaterializingGeneticProgramming,
     build_search_algorithm,
     expr,
+    load_archive,
 )
 from geneticengine.algorithms.gp.operators.combinators import ParallelStep, SequenceStep
 from geneticengine.algorithms.gp.operators.selection import LexicaseSelection
@@ -39,7 +40,7 @@ def archive_dataset(tmp_path, monkeypatch):
         def objective_vector(self, individual):
             return [0.0, 0.0, 0.0, 0.0]
 
-    monkeypatch.setattr(gp_module, "LogisticRegressionFitness", RecordingObjectiveEvaluator)
+    monkeypatch.setattr(gp_module, "RandomForestFitness", RecordingObjectiveEvaluator)
     return tmp_path / "dataset.parquet"
 
 
@@ -164,7 +165,7 @@ def test_multiobjective_csv_records_all_four_objectives(tmp_path, monkeypatch):
         def objective_vector(self, individual):
             return [0.1, 0.2, 0.3, 0.4]
 
-    monkeypatch.setattr(gp_module, "LogisticRegressionFitness", RecordingObjectiveEvaluator)
+    monkeypatch.setattr(gp_module, "RandomForestFitness", RecordingObjectiveEvaluator)
     csv_path = tmp_path / "gp_search.csv"
     algorithm = build_search_algorithm(
         EvaluationBudget(4),
@@ -327,7 +328,7 @@ def test_dataset_search_uses_one_archive_step_and_returns_initial_archive(
         def objective_vector(self, individual):
             return [0.5, 0.5, 0.5, 0.01]
 
-    monkeypatch.setattr(gp_module, "LogisticRegressionFitness", RecordingObjectiveEvaluator)
+    monkeypatch.setattr(gp_module, "RandomForestFitness", RecordingObjectiveEvaluator)
     algorithm = build_search_algorithm(
         EvaluationBudget(4),
         mapping=LABEL_MAPPING,
@@ -354,6 +355,54 @@ def test_dataset_search_uses_one_archive_step_and_returns_initial_archive(
 
     assert result == algorithm.archive.archive
     assert len(result) == algorithm.population_size
+
+
+def test_archive_path_persists_the_final_front(tmp_path, archive_dataset):
+    archive_path = tmp_path / "archive" / "front.json"
+    algorithm = build_search_algorithm(
+        EvaluationBudget(4),
+        mapping=LABEL_MAPPING,
+        population_size=4,
+        seed=123,
+        archive_path=archive_path,
+        dataset_path=archive_dataset,
+        mmap_dir=write_mmap_fixture(tmp_path / "mmap"),
+    )
+
+    assert algorithm.archive.archive_path == archive_path.resolve()
+    result = algorithm.search()
+
+    snapshot = load_archive(archive_path)
+    assert [str(expression) for expression in snapshot.expressions] == [
+        str(individual.get_phenotype()) for individual in result
+    ]
+    assert snapshot.mapping == LABEL_MAPPING
+
+
+def test_archive_path_rejects_an_existing_directory(tmp_path, archive_dataset):
+    archive_directory = tmp_path / "archive"
+    archive_directory.mkdir()
+
+    with pytest.raises(ValueError, match="archive_path must identify a file"):
+        build_search_algorithm(
+            EvaluationBudget(1),
+            mapping=LABEL_MAPPING,
+            archive_path=archive_directory,
+            dataset_path=archive_dataset,
+            mmap_dir=write_mmap_fixture(tmp_path / "mmap"),
+        )
+
+
+def test_archive_loading_types_are_importable_from_public_packages():
+    from automatedfe import ArchiveSnapshot as RootArchiveSnapshot
+    from automatedfe import ArchiveStep as RootArchiveStep
+    from automatedfe import load_archive as root_load_archive
+    from automatedfe.features import ArchiveSnapshot, ArchiveSource, ArchiveStep
+
+    assert RootArchiveSnapshot is ArchiveSnapshot
+    assert RootArchiveStep is ArchiveStep
+    assert root_load_archive is load_archive
+    assert ArchiveSource
 
 
 def test_same_seed_produces_same_initial_population_and_results(tmp_path, archive_dataset):
