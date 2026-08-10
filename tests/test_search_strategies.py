@@ -31,24 +31,26 @@ LABEL_MAPPING = {
 }
 
 
-def test_bounded_stream_delegates_and_does_not_stop_at_first_over_depth(
-    monkeypatch,
-):
+def test_bounded_stream_stops_at_first_over_depth(monkeypatch):
     shallow_one = MeanAmount(0)
     too_deep = Add(shallow_one, MeanAmount(1))
     shallow_two = MeanAmount(1)
     calls = []
+    pulled = []
 
     def fake_iterate_grammar(grammar, starting_symbol):
         calls.append((grammar, starting_symbol))
-        yield from (shallow_one, too_deep, shallow_two)
+        for candidate in (shallow_one, too_deep, shallow_two):
+            pulled.append(candidate)
+            yield candidate
 
     monkeypatch.setattr(enumerative_module, "iterate_grammar", fake_iterate_grammar)
     grammar = build_grammar(LABEL_MAPPING)
 
     stream = iter_bounded_expressions(grammar, max_depth=1)
-    assert list(stream) == [shallow_one, shallow_two]
+    assert list(stream) == [shallow_one]
     assert stream.exhausted
+    assert pulled == [shallow_one, too_deep]
     assert calls == [(grammar, grammar.starting_symbol)]
 
 

@@ -80,7 +80,8 @@ class BoundedExpressionEnumerator(Iterator[expr]):
                     f"{type(candidate).__name__}"
                 )
             if tree_depth(candidate) > self.max_depth:
-                continue
+                self._exhausted = True
+                raise StopIteration
 
             key = canonical_expression_key(candidate)
             if key in self._seen:
