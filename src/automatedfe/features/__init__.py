@@ -56,18 +56,16 @@ from .fitness import (
     ResidualEvaluator,
     ResidualFitness,
 )
-from .gp import (
-    MaterializingArchiveSearch,
-    MaterializingGeneticProgramming,
-    build_search_algorithm,
-)
-from .search_strategies import (
+from .search import (
     DEFAULT_MAX_DEPTH,
     BoundedExpressionEnumerator,
     BoundedGrammarEnumerator,
     EnumerationResult,
+    MaterializingArchiveSearch,
+    MaterializingGeneticProgramming,
     build_enumerative_search,
     build_random_search,
+    build_search_algorithm,
     canonical_expression_key,
     collect_evaluation_free_expressions,
     collect_unique_expressions,

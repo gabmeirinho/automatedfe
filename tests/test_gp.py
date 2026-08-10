@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from geneticengine.evaluation.budget import EvaluationBudget
 
-import automatedfe.features.gp as gp_module
+import automatedfe.features.search.search as shared_module
 from automatedfe.features import (
     ArchiveStep,
     MaterializingGeneticProgramming,
@@ -40,7 +40,7 @@ def archive_dataset(tmp_path, monkeypatch):
         def objective_vector(self, individual):
             return [0.0, 0.0, 0.0, 0.0]
 
-    monkeypatch.setattr(gp_module, "RandomForestFitness", RecordingObjectiveEvaluator)
+    monkeypatch.setattr(shared_module, "RandomForestFitness", RecordingObjectiveEvaluator)
     return tmp_path / "dataset.parquet"
 
 
@@ -103,7 +103,7 @@ def test_mmap_dir_is_passed_to_feature_materializer(tmp_path, monkeypatch, archi
         def materialize_population(self, individuals):
             pass
 
-    monkeypatch.setattr(gp_module, "FeatureMaterializer", RecordingMaterializer)
+    monkeypatch.setattr(shared_module, "FeatureMaterializer", RecordingMaterializer)
     mmap_dir = tmp_path / "mmap"
     feature_cache_dir = tmp_path / "features"
 
@@ -165,7 +165,7 @@ def test_multiobjective_csv_records_all_four_objectives(tmp_path, monkeypatch):
         def objective_vector(self, individual):
             return [0.1, 0.2, 0.3, 0.4]
 
-    monkeypatch.setattr(gp_module, "RandomForestFitness", RecordingObjectiveEvaluator)
+    monkeypatch.setattr(shared_module, "RandomForestFitness", RecordingObjectiveEvaluator)
     csv_path = tmp_path / "gp_search.csv"
     algorithm = build_search_algorithm(
         EvaluationBudget(4),
@@ -292,7 +292,7 @@ def test_brier_improvement_selects_residual_evaluator(tmp_path, monkeypatch):
         def objective_vector(self, individual):
             return [0.0, 0.0, 0.0, 0.0]
 
-    monkeypatch.setattr(gp_module, "ResidualEvaluator", RecordingResidualEvaluator)
+    monkeypatch.setattr(shared_module, "ResidualEvaluator", RecordingResidualEvaluator)
     mmap_dir = write_mmap_fixture(tmp_path / "mmap")
     dataset_path = tmp_path / "dataset.parquet"
 
@@ -328,7 +328,7 @@ def test_dataset_search_uses_one_archive_step_and_returns_initial_archive(
         def objective_vector(self, individual):
             return [0.5, 0.5, 0.5, 0.01]
 
-    monkeypatch.setattr(gp_module, "RandomForestFitness", RecordingObjectiveEvaluator)
+    monkeypatch.setattr(shared_module, "RandomForestFitness", RecordingObjectiveEvaluator)
     algorithm = build_search_algorithm(
         EvaluationBudget(4),
         mapping=LABEL_MAPPING,
