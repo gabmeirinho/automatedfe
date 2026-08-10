@@ -453,7 +453,7 @@ class ArchiveStep(GeneticStep):
         # Keep archive identity structural for grammar expressions.  The
         # helper's compatibility fallback preserves support for the small
         # non-grammar expression objects accepted by the historical API.
-        from .search_strategies import canonical_expression_key
+        from .search.search import canonical_expression_key
 
         return canonical_expression_key(individual.get_phenotype())
 

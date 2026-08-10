@@ -1,54 +1,55 @@
-"""Search configuration for the feature-search genetic program."""
+"""Shared lifecycle and configuration for evaluated feature searches."""
 
 from __future__ import annotations
 
+import json
 import logging
 import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from os import PathLike
+from pathlib import Path
 from time import monotonic_ns
-from typing import Protocol
+from typing import Any, Protocol
 
-from geneticengine.algorithms.gp.gp import (
-    GeneticProgramming,
-    GeneticProgrammingTwoPhase,
-)
+from geneticengine.algorithms.gp.gp import GeneticProgrammingTwoPhase
 from geneticengine.algorithms.gp.population import Population
-from geneticengine.algorithms.gp.operators.combinators import ParallelStep, SequenceStep
-from geneticengine.algorithms.gp.operators.crossover import GenericCrossoverStep
-from geneticengine.algorithms.gp.operators.elitism import ElitismStep
-from geneticengine.algorithms.gp.operators.mutation import GenericMutationStep
-from geneticengine.algorithms.gp.operators.novelty import NoveltyStep
-from geneticengine.algorithms.gp.operators.selection import LexicaseSelection
-from geneticengine.evaluation.budget import SearchBudget
 from geneticengine.evaluation import Evaluator
+from geneticengine.evaluation.budget import SearchBudget
 from geneticengine.evaluation.recorder import CSVSearchRecorder
 from geneticengine.evaluation.sequential import SequentialEvaluator
 from geneticengine.evaluation.tracker import ProgressTracker
+from geneticengine.grammar.grammar import Grammar
 from geneticengine.problems import (
     Fitness,
     InvalidFitnessException,
     MultiObjectiveProblem,
     Problem,
 )
+from geneticengine.random.sources import NativeRandomSource
+from geneticengine.representations.tree.initializations import MaxDepthDecider
+from geneticengine.representations.tree.treebased import TreeBasedRepresentation
 from geneticengine.solutions.individual import Individual, PhenotypicIndividual
 
-from .archive import ArchiveStep
-from .feature_materialization import FeatureMaterializer
-from .fitness import (
+from ..archive import ArchiveStep, encode_expression
+from ..feature_materialization import FeatureMaterializer
+from ..feature_types import TxFeature
+from ..fitness import (
     DEFAULT_N_SPLITS,
     NumericalFitnessError,
     RandomForestFitness,
     ResidualEvaluator,
 )
-from .grammar import build_grammar, collect_features
-from .search_strategies import _build_search_components, canonical_expression_key
+from ..grammar import build_grammar, collect_features, expr
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MAX_DEPTH = 4
+ARCHIVE_MINIMIZE = [False, False, False, True]
+
 
 class CandidateGenerator(Protocol):
-    """The only behavior that differs between evaluated search strategies."""
+    """Generate candidates for the shared evaluated-search lifecycle."""
 
     exhausted: bool
 
@@ -59,8 +60,115 @@ class CandidateGenerator(Protocol):
     ) -> Iterable[PhenotypicIndividual]: ...
 
 
+@dataclass(frozen=True, slots=True)
+class _SearchComponents:
+    """Configured objects shared by all evaluated strategies."""
+
+    grammar: Grammar
+    representation: TreeBasedRepresentation
+    materializer: Any
+    fitness_evaluator: Any
+    problem: MultiObjectiveProblem
+    archive_step: ArchiveStep
+    random: NativeRandomSource
+    max_depth: int
+
+
+def _build_search_components(
+    *,
+    mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None = None,
+    mmap_dir: str | PathLike[str],
+    feature_cache_dir: str | PathLike[str] | None = None,
+    dataset_path: str | PathLike[str] | None = None,
+    n_splits: int = DEFAULT_N_SPLITS,
+    score_metric: str = "roc_auc",
+    fitness_random_state: int = 42,
+    seed: int = 42,
+    max_depth: int | None = None,
+    archive_path: str | PathLike[str] | None = None,
+) -> _SearchComponents:
+    """Build the grammar, evaluator, problem, and archive foundation."""
+
+    if dataset_path is None:
+        raise ValueError("dataset_path is required for archive search")
+    if n_splits != 3:
+        raise ValueError("Archive mode requires exactly three folds")
+    grammar = build_grammar(mapping)
+    if max_depth is None:
+        max_depth = DEFAULT_MAX_DEPTH
+    if max_depth <= 0:
+        raise ValueError("max_depth must be positive")
+
+    materializer = FeatureMaterializer(mmap_dir, features_dir=feature_cache_dir)
+    random = NativeRandomSource(seed)
+    representation = TreeBasedRepresentation(
+        grammar,
+        MaxDepthDecider(random, grammar, max_depth=max_depth),
+    )
+    if score_metric in {"brier", "brier_improvement"}:
+        fitness_evaluator = ResidualEvaluator(
+            materializer,
+            dataset_path,
+            n_splits=n_splits,
+            score_metric=score_metric,
+        )
+    else:
+        fitness_evaluator = RandomForestFitness(
+            materializer,
+            dataset_path,
+            n_splits=n_splits,
+            score_metric=score_metric,
+            random_state=fitness_random_state,
+        )
+
+    objective_vector = getattr(fitness_evaluator, "objective_vector", None)
+    if not callable(objective_vector):
+        raise TypeError("Archive search requires an objective_vector evaluator")
+    problem = MultiObjectiveProblem(
+        fitness_function=objective_vector,
+        minimize=list(ARCHIVE_MINIMIZE),
+    )
+
+    if archive_path is not None:
+        resolved_archive_path = Path(archive_path).resolve()
+        if resolved_archive_path.exists() and resolved_archive_path.is_dir():
+            raise ValueError(
+                "archive_path must identify a file, not a directory: "
+                f"{resolved_archive_path}"
+            )
+    archive_step = ArchiveStep(archive_path=archive_path, mapping=mapping)
+    return _SearchComponents(
+        grammar=grammar,
+        representation=representation,
+        materializer=materializer,
+        fitness_evaluator=fitness_evaluator,
+        problem=problem,
+        archive_step=archive_step,
+        random=random,
+        max_depth=max_depth,
+    )
+
+
+def canonical_expression_key(expression: object) -> str:
+    """Return a stable structural key for an expression."""
+
+    if isinstance(expression, expr):
+        encoded: object = encode_expression(expression)
+    elif isinstance(expression, TxFeature):
+        encoded = {
+            "type": "TxFeature",
+            "name": expression.name,
+        }
+    else:
+        encoded = {
+            "type": f"{type(expression).__module__}.{type(expression).__qualname__}",
+            "value": str(expression),
+        }
+    return json.dumps(encoded, sort_keys=True, separators=(",", ":"))
+
+
 class CandidateEvaluator(SequentialEvaluator):
-    """Turn explicitly candidate-local numerical failures into invalid fitness."""
+    """Turn candidate-local numerical failures into invalid fitness."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -108,29 +216,6 @@ class CandidateEvaluator(SequentialEvaluator):
             )
             self.register_evaluation(individual, problem)
             yield individual
-
-
-def _multiobjective_programming_step(archive_step: ArchiveStep) -> SequenceStep:
-    """Build the GP generation pipeline used by archive mode."""
-
-    return SequenceStep(
-        # ArchiveStep receives the already-evaluated current population before
-        # the next generation is produced. This preserves the two-phase
-        # materialization lifecycle.
-        archive_step,
-        ParallelStep(
-            [
-                ElitismStep(),
-                NoveltyStep(),
-                SequenceStep(
-                    LexicaseSelection(epsilon=True),
-                    GenericCrossoverStep(0.01),
-                    GenericMutationStep(0.9),
-                ),
-            ],
-            weights=[5, 5, 90],
-        ),
-    )
 
 
 class ArchiveProgressTracker(ProgressTracker):
@@ -200,104 +285,14 @@ def _csv_recorder(
     )
 
 
-def build_search_algorithm(
-    budget: SearchBudget,
-    *,
-    mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None = None,
-    population_size: int = 20,
-    seed: int = 42,
-    csv_path: str | PathLike[str] | None = None,
-    archive_path: str | PathLike[str] | None = None,
-    mmap_dir: str | PathLike[str],
-    feature_cache_dir: str | PathLike[str] | None = None,
-    dataset_path: str | PathLike[str] | None = None,
-    n_splits: int = DEFAULT_N_SPLITS,
-    score_metric: str = "roc_auc",
-    fitness_random_state: int = 42,
-    max_depth: int | None = None,
-) -> GeneticProgramming:
-    """Configure the GP search over the complete expression grammar.
-
-    *mapping* supplies the encoded category values used by categorical
-    terminals. When omitted, the persisted preprocessing mapping is loaded.
-
-    *feature_cache_dir* stores the event-level feature values (one ``float64``
-    per event) computed during the search. Features already present in the
-    cache are loaded from disk instead of recomputed, so repeated runs over
-    the same event set reuse previous work. Archive mode evaluates each
-    generated feature on exactly three
-    chronological cross-validation folds and uses the resulting objective
-    vector plus materialization time. The default metrics use a fresh
-    random-forest fit defined by :class:`RandomForestFitness`;
-    ``score_metric='brier_improvement'`` (or ``'brier'``) selects the cheap
-    intercept-plus-residual evaluator defined by :class:`ResidualEvaluator`.
-    A dataset path is required because this search is always multiobjective.
-    When *archive_path* is supplied, the current strict Pareto front is saved
-    atomically as a JSON snapshot after each completed generation.
-    """
-
-    if population_size <= 0:
-        raise ValueError("population_size must be positive")
-    components = _build_search_components(
-        mapping=mapping,
-        mmap_dir=mmap_dir,
-        feature_cache_dir=feature_cache_dir,
-        dataset_path=dataset_path,
-        n_splits=n_splits,
-        score_metric=score_metric,
-        fitness_random_state=fitness_random_state,
-        seed=seed,
-        max_depth=max_depth,
-        archive_path=archive_path,
-        # Keep these module-level names as factories so the legacy builder's
-        # existing test and extension points remain intact.
-        materializer_factory=FeatureMaterializer,
-        random_fitness_factory=RandomForestFitness,
-        residual_fitness_factory=ResidualEvaluator,
-    )
-    grammar = components.grammar
-    materializer = components.materializer
-    random = components.random
-    representation = components.representation
-    fitness_evaluator = components.fitness_evaluator
-    problem = components.problem
-    archive_step = components.archive_step
-    generation_step = _multiobjective_programming_step(archive_step)
-
-    recorder = _csv_recorder(csv_path, problem)
-    tracker = ArchiveProgressTracker(
-        problem,
-        archive_step,
-        recorders=[] if recorder is None else [recorder],
-    )
-
-    return MaterializingGeneticProgramming(
-        problem=problem,
-        budget=budget,
-        representation=representation,
-        population_size=population_size,
-        random=random,
-        tracker=tracker,
-        materializer=materializer,
-        fitness_evaluator=fitness_evaluator,
-        archive_step=archive_step,
-        step=generation_step,
-    )
-
-
 class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
-    """Common materialize/evaluate/archive loop for evaluated strategies.
-
-    Genetic search uses Genetic Engine's population initializer and evolution
-    step. Enumerative and random search inject a candidate generator instead;
-    everything after candidate creation follows this same lifecycle.
-    """
+    """Common materialize/evaluate/archive loop for evaluated strategies."""
 
     def __init__(
         self,
         *args: object,
-        materializer: FeatureMaterializer,
-        fitness_evaluator: RandomForestFitness | ResidualEvaluator,
+        materializer: Any,
+        fitness_evaluator: Any,
         archive_step: ArchiveStep,
         candidate_generator: CandidateGenerator | None = None,
         deduplicate: bool = False,
@@ -431,11 +426,7 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
         individuals: list[PhenotypicIndividual],
         generation: int,
     ) -> None:
-        """Prepare the already-generated individuals before evaluation.
-
-        The evaluator prepares the event-level feature values, which are
-        computed and cached on disk before the population is evaluated.
-        """
+        """Prepare generated individuals before their evaluation."""
 
         self.last_individuals = list(individuals)
         phenotypes = [individual.get_phenotype() for individual in individuals]
@@ -447,13 +438,68 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
         self.fitness_evaluator.prepare_population(phenotypes)
 
 
-class MaterializingGeneticProgramming(MaterializingArchiveSearch):
-    """Backward-compatible name for the genetic candidate strategy."""
+def _build_evaluated_search(
+    budget: SearchBudget,
+    *,
+    candidate_generator_factory: Callable[[_SearchComponents], CandidateGenerator],
+    mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None = None,
+    mmap_dir: str | PathLike[str],
+    feature_cache_dir: str | PathLike[str] | None = None,
+    dataset_path: str | PathLike[str] | None = None,
+    n_splits: int = DEFAULT_N_SPLITS,
+    score_metric: str = "roc_auc",
+    fitness_random_state: int = 42,
+    seed: int = 42,
+    max_depth: int | None = None,
+    csv_path: str | PathLike[str] | None = None,
+    archive_path: str | PathLike[str] | None = None,
+) -> MaterializingArchiveSearch:
+    """Build a candidate-generating strategy on the shared lifecycle."""
+
+    components = _build_search_components(
+        mapping=mapping,
+        mmap_dir=mmap_dir,
+        feature_cache_dir=feature_cache_dir,
+        dataset_path=dataset_path,
+        n_splits=n_splits,
+        score_metric=score_metric,
+        fitness_random_state=fitness_random_state,
+        seed=seed,
+        max_depth=max_depth,
+        archive_path=archive_path,
+    )
+    candidate_generator = candidate_generator_factory(components)
+    recorder = _csv_recorder(csv_path, components.problem)
+    tracker = ArchiveProgressTracker(
+        components.problem,
+        components.archive_step,
+        recorders=[] if recorder is None else [recorder],
+    )
+    return MaterializingArchiveSearch(
+        problem=components.problem,
+        budget=budget,
+        representation=components.representation,
+        population_size=1,
+        random=components.random,
+        tracker=tracker,
+        materializer=components.materializer,
+        fitness_evaluator=components.fitness_evaluator,
+        archive_step=components.archive_step,
+        candidate_generator=candidate_generator,
+        deduplicate=True,
+    )
 
 
 __all__ = [
+    "ARCHIVE_MINIMIZE",
+    "DEFAULT_MAX_DEPTH",
+    "ArchiveProgressTracker",
+    "CandidateEvaluator",
+    "CandidateGenerator",
     "MaterializingArchiveSearch",
-    "MaterializingGeneticProgramming",
-    "build_grammar",
-    "build_search_algorithm",
+    "_SearchComponents",
+    "_build_evaluated_search",
+    "_build_search_components",
+    "_csv_recorder",
+    "canonical_expression_key",
 ]

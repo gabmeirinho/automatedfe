@@ -25,7 +25,7 @@ from .fitness import (
     TRAIN_SPLIT,
 )
 from .grammar import build_grammar
-from .search_strategies import canonical_expression_key
+from .search.search import canonical_expression_key
 
 TEST_SPLIT = "test"
 ARCHIVE_MINIMIZE = (False, False, False, True)
