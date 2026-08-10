@@ -51,16 +51,23 @@ from .final_evaluation import (
 )
 from .fitness import (
     FitnessEvaluator,
+    NumericalFitnessError,
     RandomForestFitness,
     ResidualEvaluator,
     ResidualFitness,
 )
-from .gp import MaterializingGeneticProgramming, build_search_algorithm
+from .gp import (
+    MaterializingArchiveSearch,
+    MaterializingGeneticProgramming,
+    build_search_algorithm,
+)
 from .search_strategies import (
     DEFAULT_MAX_DEPTH,
     BoundedExpressionEnumerator,
     BoundedGrammarEnumerator,
     EnumerationResult,
+    build_enumerative_search,
+    build_random_search,
     canonical_expression_key,
     collect_evaluation_free_expressions,
     collect_unique_expressions,
@@ -168,6 +175,8 @@ __all__ = [
     "FitnessEvaluator",
     "Log",
     "RandomForestFitness",
+    "NumericalFitnessError",
+    "MaterializingArchiveSearch",
     "MaterializingGeneticProgramming",
     "MaxAmount",
     "MeanAmount",
@@ -185,7 +194,9 @@ __all__ = [
     "TxFeature",
     "Window",
     "aggregate",
+    "build_enumerative_search",
     "build_grammar",
+    "build_random_search",
     "build_search_algorithm",
     "canonical_expression_key",
     "code_lists_from_mapping",

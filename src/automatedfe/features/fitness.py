@@ -38,6 +38,10 @@ RESIDUAL_SHRINKAGE = 0.2
 MIN_LOGIT_WEIGHT = 1e-4
 
 
+class NumericalFitnessError(ValueError):
+    """A numerical failure caused by scoring one generated expression."""
+
+
 def objectives_are_finite(objectives: Sequence[float]) -> bool:
     """Return whether every objective entry is a finite number."""
 
@@ -230,7 +234,15 @@ class ChronologicalFoldEvaluator:
         """
 
         values, duration = self._timed_values_for(individual)
-        fold_scores = self._score_folds(values, individual)
+        try:
+            fold_scores = self._score_folds(values, individual)
+        except NumericalFitnessError:
+            raise
+        except (ArithmeticError, ValueError) as error:
+            # Model and metric failures after materialization are candidate-
+            # local numerical failures.  Keep materialization/cache failures
+            # outside this block so they continue to abort the run.
+            raise NumericalFitnessError(str(error)) from error
         return [*fold_scores, float(duration)]
 
     def _score_folds(self, values: np.ndarray, individual: Any) -> list[float]:
@@ -465,6 +477,7 @@ __all__ = [
     "FitnessEvaluator",
     "RandomForestFitness",
     "MIN_LOGIT_WEIGHT",
+    "NumericalFitnessError",
     "RESIDUAL_EPSILON",
     "RESIDUAL_SHRINKAGE",
     "RESIDUAL_TREE_PARAMS",

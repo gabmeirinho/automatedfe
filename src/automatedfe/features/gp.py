@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping
+import math
+from collections.abc import Iterable, Mapping, Sequence
 from os import PathLike
-from pathlib import Path
 from time import monotonic_ns
+from typing import Protocol
 
 from geneticengine.algorithms.gp.gp import (
     GeneticProgramming,
@@ -24,18 +25,89 @@ from geneticengine.evaluation import Evaluator
 from geneticengine.evaluation.recorder import CSVSearchRecorder
 from geneticengine.evaluation.sequential import SequentialEvaluator
 from geneticengine.evaluation.tracker import ProgressTracker
-from geneticengine.problems import MultiObjectiveProblem, Problem
-from geneticengine.random.sources import NativeRandomSource
-from geneticengine.representations.tree.initializations import MaxDepthDecider
-from geneticengine.representations.tree.treebased import TreeBasedRepresentation
+from geneticengine.problems import (
+    Fitness,
+    InvalidFitnessException,
+    MultiObjectiveProblem,
+    Problem,
+)
 from geneticengine.solutions.individual import Individual, PhenotypicIndividual
 
 from .archive import ArchiveStep
 from .feature_materialization import FeatureMaterializer
-from .fitness import DEFAULT_N_SPLITS, RandomForestFitness, ResidualEvaluator
+from .fitness import (
+    DEFAULT_N_SPLITS,
+    NumericalFitnessError,
+    RandomForestFitness,
+    ResidualEvaluator,
+)
 from .grammar import build_grammar, collect_features
+from .search_strategies import _build_search_components, canonical_expression_key
 
 logger = logging.getLogger(__name__)
+
+
+class CandidateGenerator(Protocol):
+    """The only behavior that differs between evaluated search strategies."""
+
+    exhausted: bool
+
+    def generate(
+        self,
+        previous: Sequence[PhenotypicIndividual],
+        generation: int,
+    ) -> Iterable[PhenotypicIndividual]: ...
+
+
+class CandidateEvaluator(SequentialEvaluator):
+    """Turn explicitly candidate-local numerical failures into invalid fitness."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.invalid_reasons: dict[str, str] = {}
+
+    def evaluate_async(self, problem: Problem, individuals: Iterable[Individual]):
+        for individual in individuals:
+            if individual.has_fitness(problem):
+                yield individual
+                continue
+
+            key = canonical_expression_key(individual.get_phenotype())
+            reason = None
+            try:
+                fitness = self.eval_single(problem, individual)
+            except (
+                InvalidFitnessException,
+                ArithmeticError,
+                NumericalFitnessError,
+            ) as error:
+                fitness = problem.get_invalid_fitness()
+                reason = f"{type(error).__name__}: {error}"
+
+            components = fitness.fitness_components
+            try:
+                valid = (
+                    fitness.valid
+                    and len(components) == problem.number_of_objectives()
+                    and all(math.isfinite(float(value)) for value in components)
+                )
+            except (TypeError, ValueError, OverflowError):
+                valid = False
+            if not valid:
+                fitness = problem.get_invalid_fitness()
+                reason = reason or "invalid objective vector"
+            if reason is not None:
+                self.invalid_reasons[key] = reason
+
+            individual.set_fitness(
+                problem,
+                Fitness(
+                    list(fitness.fitness_components),
+                    valid=fitness.valid,
+                ),
+            )
+            self.register_evaluation(individual, problem)
+            yield individual
 
 
 def _multiobjective_programming_step(archive_step: ArchiveStep) -> SequenceStep:
@@ -74,7 +146,7 @@ class ArchiveProgressTracker(ProgressTracker):
     ) -> None:
         self.start_time = monotonic_ns()
         self.problem = problem
-        self.evaluator = evaluator if evaluator is not None else SequentialEvaluator()
+        self.evaluator = evaluator if evaluator is not None else CandidateEvaluator()
         self.recorders = [] if recorders is None else recorders
         self.archive_step = archive_step
         self.memory = None
@@ -92,6 +164,40 @@ class ArchiveProgressTracker(ProgressTracker):
 
     def get_best_individuals(self) -> list[Individual]:
         return list(self.archive_step.archive)
+
+
+def _csv_recorder(
+    csv_path: str | PathLike[str] | None,
+    problem: Problem,
+) -> CSVSearchRecorder | None:
+    if csv_path is None:
+        return None
+
+    def phenotype(individual: PhenotypicIndividual):
+        return individual.get_phenotype()
+
+    def dependencies(individual: PhenotypicIndividual) -> str:
+        return ";".join(
+            sorted(feature.name for feature in collect_features(phenotype(individual)))
+        )
+
+    return CSVSearchRecorder(
+        csv_path=str(csv_path),
+        problem=problem,
+        fields={
+            "Generation": lambda _t, ind, _p: ind.metadata["generation"],
+            "Expression": lambda _t, ind, _p: str(phenotype(ind)),
+            "Dependencies": lambda _t, ind, _p: dependencies(ind),
+            "Fitness": lambda _t, ind, p: ind.get_fitness(p).fitness_components[0],
+            "Split1": lambda _t, ind, p: ind.get_fitness(p).fitness_components[0],
+            "Split2": lambda _t, ind, p: ind.get_fitness(p).fitness_components[1],
+            "Split3": lambda _t, ind, p: ind.get_fitness(p).fitness_components[2],
+            "MaterializationTime": lambda _t, ind, p: ind.get_fitness(
+                p
+            ).fitness_components[3],
+        },
+        only_record_best_individuals=False,
+    )
 
 
 def build_search_algorithm(
@@ -132,83 +238,33 @@ def build_search_algorithm(
 
     if population_size <= 0:
         raise ValueError("population_size must be positive")
-    if dataset_path is None:
-        raise ValueError("dataset_path is required for archive search")
-    if n_splits != 3:
-        raise ValueError("Archive mode requires exactly three folds")
-    grammar = build_grammar(mapping)
-    if max_depth is None:
-        max_depth = 4
-    if max_depth <= 0:
-        raise ValueError("max_depth must be positive")
-    materializer = FeatureMaterializer(mmap_dir, features_dir=feature_cache_dir)
-
-    random = NativeRandomSource(seed)
-    representation = TreeBasedRepresentation(
-        grammar,
-        MaxDepthDecider(random, grammar, max_depth=max_depth),
+    components = _build_search_components(
+        mapping=mapping,
+        mmap_dir=mmap_dir,
+        feature_cache_dir=feature_cache_dir,
+        dataset_path=dataset_path,
+        n_splits=n_splits,
+        score_metric=score_metric,
+        fitness_random_state=fitness_random_state,
+        seed=seed,
+        max_depth=max_depth,
+        archive_path=archive_path,
+        # Keep these module-level names as factories so the legacy builder's
+        # existing test and extension points remain intact.
+        materializer_factory=FeatureMaterializer,
+        random_fitness_factory=RandomForestFitness,
+        residual_fitness_factory=ResidualEvaluator,
     )
-    if score_metric in {"brier", "brier_improvement"}:
-        fitness_evaluator = ResidualEvaluator(
-            materializer,
-            dataset_path,
-            n_splits=n_splits,
-            score_metric=score_metric,
-        )
-    else:
-        fitness_evaluator = RandomForestFitness(
-            materializer,
-            dataset_path,
-            n_splits=n_splits,
-            score_metric=score_metric,
-            random_state=fitness_random_state,
-        )
-    objective_vector = getattr(fitness_evaluator, "objective_vector", None)
-    if not callable(objective_vector):
-        raise TypeError("Archive search requires an objective_vector evaluator")
-    problem = MultiObjectiveProblem(
-        fitness_function=objective_vector,
-        minimize=[False, False, False, True],
-    )
-    if archive_path is not None:
-        resolved_archive_path = Path(archive_path).resolve()
-        if resolved_archive_path.exists() and resolved_archive_path.is_dir():
-            raise ValueError(
-                "archive_path must identify a file, not a directory: "
-                f"{resolved_archive_path}"
-            )
-    archive_step = ArchiveStep(archive_path=archive_path, mapping=mapping)
+    grammar = components.grammar
+    materializer = components.materializer
+    random = components.random
+    representation = components.representation
+    fitness_evaluator = components.fitness_evaluator
+    problem = components.problem
+    archive_step = components.archive_step
     generation_step = _multiobjective_programming_step(archive_step)
 
-    recorder = None
-    if csv_path is not None:
-        def _phenotype(individual: PhenotypicIndividual):
-            return individual.get_phenotype()
-
-        def _dependencies(individual: PhenotypicIndividual) -> str:
-            phenotype = _phenotype(individual)
-            return ";".join(
-                sorted(feature.name for feature in collect_features(phenotype))
-            )
-
-        recorder = CSVSearchRecorder(
-            csv_path=str(csv_path),
-            problem=problem,
-            fields={
-                "Generation": lambda _t, individual, _p: individual.metadata["generation"],
-                "Expression": lambda _t, individual, _p: str(_phenotype(individual)),
-                "Dependencies": lambda _t, individual, _p: _dependencies(individual),
-                # Keep the historical single-objective "Fitness" column first so
-                # existing consumers keep working, then expose the full four-objective
-                # vector used by archive search.
-                "Fitness": lambda _t, individual, p: individual.get_fitness(p).fitness_components[0],
-                "Split1": lambda _t, individual, p: individual.get_fitness(p).fitness_components[0],
-                "Split2": lambda _t, individual, p: individual.get_fitness(p).fitness_components[1],
-                "Split3": lambda _t, individual, p: individual.get_fitness(p).fitness_components[2],
-                "MaterializationTime": lambda _t, individual, p: individual.get_fitness(p).fitness_components[3],
-            },
-            only_record_best_individuals=False,
-        )
+    recorder = _csv_recorder(csv_path, problem)
     tracker = ArchiveProgressTracker(
         problem,
         archive_step,
@@ -229,8 +285,13 @@ def build_search_algorithm(
     )
 
 
-class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
-    """Two-phase GP that materializes a complete generation before fitness."""
+class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
+    """Common materialize/evaluate/archive loop for evaluated strategies.
+
+    Genetic search uses Genetic Engine's population initializer and evolution
+    step. Enumerative and random search inject a candidate generator instead;
+    everything after candidate creation follows this same lifecycle.
+    """
 
     def __init__(
         self,
@@ -238,6 +299,8 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
         materializer: FeatureMaterializer,
         fitness_evaluator: RandomForestFitness | ResidualEvaluator,
         archive_step: ArchiveStep,
+        candidate_generator: CandidateGenerator | None = None,
+        deduplicate: bool = False,
         **kwargs: object,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -245,55 +308,122 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
         self.fitness_evaluator = fitness_evaluator
         self.archive_step = archive_step
         self.archive = archive_step
+        self.candidate_generator = candidate_generator
+        self.deduplicate = deduplicate
+        self._seen: set[str] = set()
+        self.generated_count = 0
+        self.duplicate_count = 0
+        self.accepted_count = 0
+        self.invalid_count = 0
+        self.accepted_individuals: list[PhenotypicIndividual] = []
         self.last_individuals: list[PhenotypicIndividual] = []
+
+    @property
+    def grammar_exhausted(self) -> bool:
+        return bool(
+            self.candidate_generator is not None
+            and self.candidate_generator.exhausted
+        )
+
+    @property
+    def seen_keys(self) -> frozenset[str]:
+        return frozenset(self._seen)
+
+    @property
+    def invalid_reasons(self) -> dict[str, str]:
+        return dict(getattr(self.tracker.evaluator, "invalid_reasons", {}))
+
+    def _generate_initial_individuals(self) -> list[PhenotypicIndividual]:
+        if self.candidate_generator is None:
+            return super()._generate_initial_individuals()
+        return self._generate_candidates([], 0)
+
+    def _generate_next_individuals(
+        self,
+        current_individuals: list[PhenotypicIndividual],
+        generation: int,
+    ) -> list[PhenotypicIndividual]:
+        if self.candidate_generator is None:
+            return super()._generate_next_individuals(
+                current_individuals,
+                generation,
+            )
+        return self._generate_candidates(current_individuals, generation)
+
+    def _generate_candidates(
+        self,
+        current_individuals: list[PhenotypicIndividual],
+        generation: int,
+    ) -> list[PhenotypicIndividual]:
+        assert self.candidate_generator is not None
+        individuals = list(
+            self.candidate_generator.generate(current_individuals, generation)
+        )
+        for individual in individuals:
+            individual.metadata["generation"] = generation
+        return individuals
+
+    def _accept_candidates(
+        self,
+        individuals: list[PhenotypicIndividual],
+    ) -> list[PhenotypicIndividual]:
+        accepted: list[PhenotypicIndividual] = []
+        for individual in individuals:
+            self.generated_count += 1
+            key = canonical_expression_key(individual.get_phenotype())
+            if self.deduplicate and key in self._seen:
+                self.duplicate_count += 1
+                continue
+            self._seen.add(key)
+            self.accepted_count += 1
+            accepted.append(individual)
+        return accepted
 
     def perform_search(self) -> list[Individual] | None:
         generation = 0
-        current_individuals = self._generate_initial_individuals()
-        self.precompute_population(current_individuals, generation)
-        current_individuals = list(
-            self.archive_step.apply(
-                self.problem,
-                self.tracker.evaluator,
-                self.representation,
-                self.random,
-                iter(current_individuals),
-                len(current_individuals),
-                generation,
-            )
-        )
-        current_population = Population(
-            iter(current_individuals),
-            self.tracker,
-            generation=generation,
-        )
+        current_individuals: list[PhenotypicIndividual] = []
 
-        while not self.is_done():
-            generation += 1
-            next_individuals = self._generate_next_individuals(
-                current_population.get_individuals(),
-                generation,
+        while generation == 0 or not self.is_done():
+            generated = (
+                self._generate_initial_individuals()
+                if generation == 0
+                else self._generate_next_individuals(
+                    current_individuals,
+                    generation,
+                )
             )
-            self.precompute_population(next_individuals, generation)
+            accepted = self._accept_candidates(generated)
+            if not accepted:
+                if self.grammar_exhausted:
+                    break
+                generation += 1
+                continue
+
+            self.precompute_population(accepted, generation)
+            archived = list(
+                self.archive_step.apply(
+                    self.problem,
+                    self.tracker.evaluator,
+                    self.representation,
+                    self.random,
+                    iter(accepted),
+                    len(accepted),
+                    generation,
+                )
+            )
             current_population = Population(
-                iter(next_individuals),
+                iter(archived),
                 self.tracker,
-                generation,
+                generation=generation,
             )
+            current_individuals = current_population.get_individuals()
+            self.accepted_individuals.extend(current_individuals)
+            self.invalid_count += sum(
+                not individual.get_fitness(self.problem).valid
+                for individual in current_individuals
+            )
+            generation += 1
 
-        # The step runs before generation production, so explicitly archive
-        # the final evaluated population after the budget stops the loop.
-        list(
-            self.archive_step.apply(
-                self.problem,
-                self.tracker.evaluator,
-                self.representation,
-                self.random,
-                iter(current_population.get_individuals()),
-                len(current_population.get_individuals()),
-                generation,
-            )
-        )
         return list(self.archive_step.archive)
 
     def precompute_population(
@@ -310,14 +440,19 @@ class MaterializingGeneticProgramming(GeneticProgrammingTwoPhase):
         self.last_individuals = list(individuals)
         phenotypes = [individual.get_phenotype() for individual in individuals]
         logger.info(
-            "Materializing generation %d: %d GP features",
+            "Materializing generation %d: %d features",
             generation,
             len(phenotypes),
         )
         self.fitness_evaluator.prepare_population(phenotypes)
 
 
+class MaterializingGeneticProgramming(MaterializingArchiveSearch):
+    """Backward-compatible name for the genetic candidate strategy."""
+
+
 __all__ = [
+    "MaterializingArchiveSearch",
     "MaterializingGeneticProgramming",
     "build_grammar",
     "build_search_algorithm",
