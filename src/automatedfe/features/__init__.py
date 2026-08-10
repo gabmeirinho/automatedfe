@@ -63,10 +63,8 @@ from .search_strategies import (
     EnumerationResult,
     canonical_expression_key,
     collect_evaluation_free_expressions,
-    collect_feature_expressions,
     collect_unique_expressions,
     iter_bounded_expressions,
-    iter_feature_expressions,
 )
 from .grammar import (
     NON_TERMINALS,
@@ -192,7 +190,6 @@ __all__ = [
     "canonical_expression_key",
     "code_lists_from_mapping",
     "collect_evaluation_free_expressions",
-    "collect_feature_expressions",
     "collect_features",
     "collect_unique_expressions",
     "count_nodes",
@@ -201,7 +198,6 @@ __all__ = [
     "expr",
     "load_archive",
     "iter_bounded_expressions",
-    "iter_feature_expressions",
     "materialize_aggregation",
     "materialize_feature",
     "materialize_individual",

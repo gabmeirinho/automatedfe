@@ -10,14 +10,13 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any
 
 from geneticengine.algorithms.enumerative import iterate_grammar
 from geneticengine.grammar.grammar import Grammar
 
 from .archive import encode_expression
 from .feature_types import TxFeature
-from .grammar import build_grammar, expr, tree_depth
+from .grammar import expr, tree_depth
 
 DEFAULT_MAX_DEPTH = 4
 
@@ -182,34 +181,6 @@ def collect_unique_expressions(
     return EnumerationResult(tuple(expressions), stream.exhausted)
 
 
-def iter_feature_expressions(
-    mapping: Any = None,
-    *,
-    max_depth: int = DEFAULT_MAX_DEPTH,
-) -> BoundedExpressionEnumerator:
-    """Create the bounded stream for the complete feature grammar."""
-
-    return iter_bounded_expressions(
-        build_grammar(mapping),
-        max_depth=max_depth,
-    )
-
-
-def collect_feature_expressions(
-    candidate_count: int,
-    mapping: Any = None,
-    *,
-    max_depth: int = DEFAULT_MAX_DEPTH,
-) -> EnumerationResult:
-    """Collect complete-grammar expressions without evaluating them."""
-
-    return collect_unique_expressions(
-        build_grammar(mapping),
-        candidate_count,
-        max_depth=max_depth,
-    )
-
-
 # These aliases make the strategy intent explicit at call sites while keeping
 # one implementation of the traversal and collection behavior.
 BoundedGrammarEnumerator = BoundedExpressionEnumerator
@@ -223,8 +194,6 @@ __all__ = [
     "EnumerationResult",
     "canonical_expression_keyf",
     "collect_evaluation_free_expressions",
-    "collect_feature_expressions",
     "collect_unique_expressions",
     "iter_bounded_expressions",
-    "iter_feature_expressions",
 ]
