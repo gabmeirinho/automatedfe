@@ -6,12 +6,14 @@ from geneticengine.evaluation.budget import EvaluationBudget
 import automatedfe.features.search.enumerative_search as enumerative_module
 import automatedfe.features.search.random_search as random_module
 import automatedfe.features.search.search as shared_module
+import automatedfe.features.search.unbound_enumerative_search as unbound_module
 from automatedfe.features import (
     Add,
     CountCategory,
-    MeanAmount,
     MaterializingArchiveSearch,
+    MeanAmount,
     build_enumerative_search,
+    build_unbound_enumerative_search,
     build_grammar,
     build_random_search,
     canonical_expression_key,
@@ -19,7 +21,6 @@ from automatedfe.features import (
     iter_bounded_expressions,
     tree_depth,
 )
-
 
 LABEL_MAPPING = {
     "status": {"approved": 0, "complete": 1},
@@ -110,6 +111,9 @@ def evaluated_strategy_dependencies(monkeypatch):
         def prepare_population(self, expressions):
             prepared.extend(expressions)
 
+        def __call__(self, _expression):
+            return 0.2
+
         def objective_vector(self, _expression):
             return [0.1, 0.2, 0.3, 0.01]
 
@@ -146,3 +150,77 @@ def test_evaluated_strategies_share_one_lifecycle(
     assert random.tracker.get_number_evaluations() == 2
     assert enumerative.accepted_count == random.accepted_count == 2
     assert len(evaluated_strategy_dependencies) == 4
+
+
+def test_unbound_search_generates_one_batch_without_evaluation(monkeypatch):
+    def fake_iterate_grammar(grammar, starting_symbol):
+        yield from (MeanAmount(index) for index in range(5))
+
+    monkeypatch.setattr(enumerative_module, "iterate_grammar", fake_iterate_grammar)
+    unbound = build_unbound_enumerative_search(
+        5,
+        mapping=LABEL_MAPPING,
+    )
+
+    assert type(unbound) is unbound_module.UnboundEnumerativeSearch
+    assert not hasattr(unbound, "archive")
+    assert not hasattr(unbound, "fitness_evaluator")
+
+    results = unbound.search()
+
+    assert unbound.accepted_count == 5
+    assert len(results) == 5
+    assert results == [MeanAmount(index) for index in range(5)]
+
+
+def test_unbound_search_exhausts_the_grammar_stream_before_the_batch_limit(
+    monkeypatch,
+):
+    yielded = [MeanAmount(0), MeanAmount(1)]
+
+    def fake_iterate_grammar(grammar, starting_symbol):
+        yield from yielded
+
+    monkeypatch.setattr(enumerative_module, "iterate_grammar", fake_iterate_grammar)
+    unbound = build_unbound_enumerative_search(
+        10,
+        mapping=LABEL_MAPPING,
+    )
+
+    results = unbound.search()
+
+    assert unbound.grammar_exhausted
+    assert unbound.accepted_count == 2
+    assert unbound.generated_count == 2
+    assert unbound.duplicate_count == 0
+    assert len(results) == 2
+
+
+def test_unbound_search_generates_exactly_the_requested_batch_size(monkeypatch):
+    def fake_iterate_grammar(grammar, starting_symbol):
+        yield from (MeanAmount(index) for index in range(7))
+
+    monkeypatch.setattr(enumerative_module, "iterate_grammar", fake_iterate_grammar)
+    unbound = build_unbound_enumerative_search(
+        3,
+        mapping=LABEL_MAPPING,
+    )
+    results = unbound.search()
+
+    assert unbound.accepted_count == 3
+    assert len(results) == 3
+
+
+def test_unbound_search_preserves_enumeration_order(monkeypatch):
+    def fake_iterate_grammar(grammar, starting_symbol):
+        yield MeanAmount(0)
+        yield MeanAmount(1)
+
+    monkeypatch.setattr(enumerative_module, "iterate_grammar", fake_iterate_grammar)
+    unbound = build_unbound_enumerative_search(
+        10,
+        mapping=LABEL_MAPPING,
+    )
+    results = unbound.search()
+
+    assert results == [MeanAmount(0), MeanAmount(1)]

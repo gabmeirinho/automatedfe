@@ -1,8 +1,8 @@
-"""Evaluated and archive-free enumeration strategies."""
+"""Archive-backed enumerative search and bounded grammar enumeration."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from os import PathLike
 
@@ -12,13 +12,13 @@ from geneticengine.grammar.grammar import Grammar
 from geneticengine.solutions.individual import ConcreteIndividual, PhenotypicIndividual
 
 from ..fitness import DEFAULT_N_SPLITS
-from ..grammar import build_grammar, expr, tree_depth
+from ..grammar import expr, tree_depth
 from .search import (
     DEFAULT_MAX_DEPTH,
+    MaterializingArchiveSearch,
     _SearchComponents,
     _build_evaluated_search,
     canonical_expression_key,
-    MaterializingArchiveSearch,
 )
 
 
@@ -183,7 +183,7 @@ def build_enumerative_search(
     csv_path: str | PathLike[str] | None = None,
     archive_path: str | PathLike[str] | None = None,
 ) -> MaterializingArchiveSearch:
-    """Build the evaluated bounded enumerative strategy."""
+    """Build the evaluated archive-backed enumerative strategy."""
 
     def candidate_generator(components: _SearchComponents):
         return _EnumerativeCandidateGenerator(

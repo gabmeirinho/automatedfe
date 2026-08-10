@@ -12,9 +12,9 @@ from geneticengine.solutions.individual import PhenotypicIndividual
 
 from ..fitness import DEFAULT_N_SPLITS
 from .search import (
-    _SearchComponents,
-    _build_evaluated_search,
     MaterializingArchiveSearch,
+    _build_evaluated_search,
+    _SearchComponents,
 )
 
 
