@@ -22,6 +22,7 @@ from .fitness import (
     ResidualFitness,
 )
 from .preprocessing import preprocess
+from .features.runner import SearchRunResult, SearchStrategy, run_feature_search
 from .sorting import (
     DEFAULT_CARD_TOKENS_INPUT,
     DEFAULT_DATASET_INPUT,
@@ -63,6 +64,8 @@ __all__ = [
     "RandomForestFitness",
     "ResidualEvaluator",
     "ResidualFitness",
+    "SearchRunResult",
+    "SearchStrategy",
     "column_dtype",
     "encode_transactions",
     "first_sorting_violation",
@@ -78,4 +81,5 @@ __all__ = [
     "read_manifest",
     "sort_dataset",
     "sort_transactions",
+    "run_feature_search",
 ]

@@ -116,6 +116,7 @@ from .search import (
     iter_bounded_expressions,
     UnboundEnumerativeSearch,
 )
+from .runner import SearchRunResult, SearchStrategy, run_feature_search
 
 __all__ = [
     "AMOUNT_COLUMN",
@@ -185,6 +186,8 @@ __all__ = [
     "RateAgg",
     "ResidualEvaluator",
     "ResidualFitness",
+    "SearchRunResult",
+    "SearchStrategy",
     "RowWindow",
     "SafeDiv",
     "StdAmount",
@@ -216,4 +219,5 @@ __all__ = [
     "materialize_individual",
     "sliding_window",
     "tree_depth",
+    "run_feature_search",
 ]
