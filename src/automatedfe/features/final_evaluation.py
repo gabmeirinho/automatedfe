@@ -17,7 +17,6 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 
 from .archive import ArchiveSnapshot, ArchiveStep, load_archive
 from .feature_materialization import FeatureMaterializer
-from .feature_types import TxFeature
 from .fitness import (
     DATASET_MERCHANT_COLUMN,
     DATASET_TARGET_COLUMN,
@@ -26,6 +25,7 @@ from .fitness import (
     TRAIN_SPLIT,
 )
 from .grammar import build_grammar
+from .search_strategies import canonical_expression_key
 
 TEST_SPLIT = "test"
 ARCHIVE_MINIMIZE = (False, False, False, True)
@@ -82,14 +82,10 @@ def _deduplicate_individuals(individuals: Sequence[Any]) -> list[Any]:
     unique: list[Any] = []
     for individual in individuals:
         individual = _as_expression(individual)
-        name = (
-            individual.name
-            if isinstance(individual, TxFeature)
-            else str(individual)
-        )
-        if name in seen:
+        key = canonical_expression_key(individual)
+        if key in seen:
             continue
-        seen.add(name)
+        seen.add(key)
         unique.append(individual)
     return unique
 
