@@ -120,7 +120,7 @@ def evaluated_strategy_dependencies(monkeypatch):
             return [0.1, 0.2, 0.3, 0.01]
 
     monkeypatch.setattr(shared_module, "FeatureMaterializer", StubMaterializer)
-    monkeypatch.setattr(shared_module, "RandomForestFitness", StubFitness)
+    monkeypatch.setattr(shared_module, "ResidualEvaluator", StubFitness)
     return prepared
 
 

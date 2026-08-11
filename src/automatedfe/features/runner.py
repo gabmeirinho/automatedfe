@@ -542,7 +542,7 @@ def run_feature_search(
     mmap_dir: str | PathLike[str] = DEFAULT_MMAP_DIR,
     feature_cache_dir: str | PathLike[str] | None = None,
     n_splits: int = DEFAULT_N_SPLITS,
-    score_metric: str = "roc_auc",
+    score_metric: str = "brier_improvement",
     fitness_random_state: int = DEFAULT_RANDOM_STATE,
     seed: int = 42,
     population_size: int = 50,

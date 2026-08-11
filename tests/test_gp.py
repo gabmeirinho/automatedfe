@@ -40,7 +40,7 @@ def archive_dataset(tmp_path, monkeypatch):
         def objective_vector(self, individual):
             return [0.0, 0.0, 0.0, 0.0]
 
-    monkeypatch.setattr(shared_module, "RandomForestFitness", RecordingObjectiveEvaluator)
+    monkeypatch.setattr(shared_module, "ResidualEvaluator", RecordingObjectiveEvaluator)
     return tmp_path / "dataset.parquet"
 
 
@@ -89,6 +89,17 @@ def test_search_uses_the_complete_grammar_and_default_depth(tmp_path, archive_da
     algorithm.search()
 
     assert algorithm.tracker.get_number_evaluations() == 10
+
+
+def test_search_defaults_to_population_size_50(tmp_path, archive_dataset):
+    algorithm = build_search_algorithm(
+        EvaluationBudget(1),
+        mapping=LABEL_MAPPING,
+        dataset_path=archive_dataset,
+        mmap_dir=write_mmap_fixture(tmp_path / "mmap"),
+    )
+
+    assert algorithm.population_size == 50
 
 
 def test_mmap_dir_is_passed_to_feature_materializer(tmp_path, monkeypatch, archive_dataset):
@@ -165,7 +176,7 @@ def test_multiobjective_csv_records_all_four_objectives(tmp_path, monkeypatch):
         def objective_vector(self, individual):
             return [0.1, 0.2, 0.3, 0.4]
 
-    monkeypatch.setattr(shared_module, "RandomForestFitness", RecordingObjectiveEvaluator)
+    monkeypatch.setattr(shared_module, "ResidualEvaluator", RecordingObjectiveEvaluator)
     csv_path = tmp_path / "gp_search.csv"
     algorithm = build_search_algorithm(
         EvaluationBudget(4),
@@ -328,7 +339,7 @@ def test_dataset_search_uses_one_archive_step_and_returns_initial_archive(
         def objective_vector(self, individual):
             return [0.5, 0.5, 0.5, 0.01]
 
-    monkeypatch.setattr(shared_module, "RandomForestFitness", RecordingObjectiveEvaluator)
+    monkeypatch.setattr(shared_module, "ResidualEvaluator", RecordingObjectiveEvaluator)
     algorithm = build_search_algorithm(
         EvaluationBudget(4),
         mapping=LABEL_MAPPING,

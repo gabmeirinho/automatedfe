@@ -140,7 +140,7 @@ def test_evaluated_runner_finalizes_membership_and_saves_one_archive(
             return [0.1, 0.2, 0.3, 0.01]
 
     monkeypatch.setattr(shared_search_module, "FeatureMaterializer", StubMaterializer)
-    monkeypatch.setattr(shared_search_module, "RandomForestFitness", StubFitness)
+    monkeypatch.setattr(shared_search_module, "ResidualEvaluator", StubFitness)
     monkeypatch.setattr(
         runner_module,
         "_build_final_evaluator",
@@ -186,7 +186,7 @@ def test_invalid_evaluated_rows_survive_empty_archive_failure(tmp_path, monkeypa
             return [0.1, float("nan"), 0.3, 0.01]
 
     monkeypatch.setattr(shared_search_module, "FeatureMaterializer", StubMaterializer)
-    monkeypatch.setattr(shared_search_module, "RandomForestFitness", InvalidFitness)
+    monkeypatch.setattr(shared_search_module, "ResidualEvaluator", InvalidFitness)
     csv_path = tmp_path / "invalid.csv"
 
     with pytest.raises(ValueError, match="empty archive"):

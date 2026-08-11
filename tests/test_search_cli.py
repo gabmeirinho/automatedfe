@@ -76,6 +76,31 @@ def test_cli_dispatches_evaluation_free_strategy_and_writes_summary(
     assert str(summary_path.resolve()) in stdout
 
 
+def test_cli_defaults_to_residual_brier_improvement(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(strategy, **kwargs):
+        calls.append((strategy, kwargs))
+        return fake_result(strategy)
+
+    monkeypatch.setattr(search_cli, "run_feature_search", fake_run)
+
+    assert search_cli.main(
+        [
+            "--strategy",
+            "enumerative",
+            "--time-budget",
+            "1",
+            "--dataset",
+            str(tmp_path / "dataset.parquet"),
+            "--mapping",
+            str(tmp_path / "mapping.json"),
+        ]
+    ) == 0
+
+    assert calls[0][1]["score_metric"] == "brier_improvement"
+
+
 @pytest.mark.parametrize(
     "arguments",
     [

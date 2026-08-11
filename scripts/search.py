@@ -101,8 +101,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--score-metric",
         choices=("accuracy", "roc_auc", "brier", "brier_improvement"),
-        default="roc_auc",
-        help="Cross-validation score metric (default: roc_auc)",
+        default="brier_improvement",
+        help="Cross-validation score metric (default: brier_improvement)",
     )
     parser.add_argument(
         "--fitness-random-state",
