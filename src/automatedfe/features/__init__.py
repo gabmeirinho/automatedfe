@@ -122,6 +122,7 @@ from .runner import (
     SearchRunResult,
     SearchStrategy,
     run_feature_search,
+    write_summary_json,
 )
 
 __all__ = [
@@ -228,4 +229,5 @@ __all__ = [
     "sliding_window",
     "tree_depth",
     "run_feature_search",
+    "write_summary_json",
 ]

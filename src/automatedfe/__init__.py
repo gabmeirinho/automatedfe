@@ -28,6 +28,7 @@ from .features.runner import (
     SearchRunResult,
     SearchStrategy,
     run_feature_search,
+    write_summary_json,
 )
 from .sorting import (
     DEFAULT_CARD_TOKENS_INPUT,
@@ -90,4 +91,5 @@ __all__ = [
     "sort_dataset",
     "sort_transactions",
     "run_feature_search",
+    "write_summary_json",
 ]

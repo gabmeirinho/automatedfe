@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import csv
+import json
 import math
 import os
 import tempfile
@@ -229,6 +230,50 @@ def _atomic_write_diagnostics(
             os.unlink(temporary_name)
         raise
     return path
+
+
+def _atomic_write_json(path: Path, document: Mapping[str, object]) -> Path:
+    """Write a JSON document through a durable sibling temporary file."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    try:
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as output:
+            json.dump(document, output, indent=2, sort_keys=True)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary_name)
+        raise
+    return path
+
+
+def write_summary_json(
+    path: str | PathLike[str],
+    summary: Mapping[str, object],
+    *,
+    force: bool = False,
+) -> Path:
+    """Atomically persist a runner summary, protecting existing files by default."""
+
+    if not isinstance(force, bool):
+        raise ValueError("force must be a boolean")
+    resolved_path = Path(path).resolve()
+    if resolved_path.exists() and resolved_path.is_dir():
+        raise ValueError(
+            f"Output path must identify a file, not a directory: {resolved_path}"
+        )
+    if resolved_path.exists() and not force:
+        raise FileExistsError(
+            "Refusing to overwrite existing output without force=True: "
+            f"{resolved_path}"
+        )
+    return _atomic_write_json(resolved_path, summary)
 
 
 @dataclass(frozen=True, slots=True)
@@ -500,7 +545,7 @@ def run_feature_search(
     score_metric: str = "roc_auc",
     fitness_random_state: int = DEFAULT_RANDOM_STATE,
     seed: int = 42,
-    population_size: int = 20,
+    population_size: int = 50,
     max_depth: int | None = None,
     csv_path: str | PathLike[str] | None = None,
     archive_path: str | PathLike[str] | None = None,
@@ -669,4 +714,5 @@ __all__ = [
     "SearchRunResult",
     "SearchStrategy",
     "run_feature_search",
+    "write_summary_json",
 ]
