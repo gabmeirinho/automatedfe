@@ -116,7 +116,13 @@ from .search import (
     iter_bounded_expressions,
     UnboundEnumerativeSearch,
 )
-from .runner import SearchRunResult, SearchStrategy, run_feature_search
+from .runner import (
+    DIAGNOSTIC_COLUMNS,
+    RunnerDiagnosticsRecorder,
+    SearchRunResult,
+    SearchStrategy,
+    run_feature_search,
+)
 
 __all__ = [
     "AMOUNT_COLUMN",
@@ -127,6 +133,7 @@ __all__ = [
     "DAILY_KINDS",
     "DAY_MICROSECONDS",
     "DEFAULT_MAX_DEPTH",
+    "DIAGNOSTIC_COLUMNS",
     "FAMILIES",
     "FEATURE_MMAP_SUFFIX",
     "FORMAT_VERSION",
@@ -186,6 +193,7 @@ __all__ = [
     "RateAgg",
     "ResidualEvaluator",
     "ResidualFitness",
+    "RunnerDiagnosticsRecorder",
     "SearchRunResult",
     "SearchStrategy",
     "RowWindow",
