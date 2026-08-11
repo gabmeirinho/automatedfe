@@ -31,7 +31,16 @@ from geneticengine.representations.tree.initializations import MaxDepthDecider
 from geneticengine.representations.tree.treebased import TreeBasedRepresentation
 from geneticengine.solutions.individual import Individual, PhenotypicIndividual
 
-from ..archive import ArchiveStep, encode_expression
+from ..archive import (
+    ArchiveStep,
+    FilteredArchiveStep,
+    absolute_pearson_correlation,
+    correlation_rejection,
+    encode_expression,
+    is_correlated_pairwise,
+    validate_archive_quality_threshold,
+    validate_correlation_threshold,
+)
 from ..feature_materialization import FeatureMaterializer
 from ..feature_types import TxFeature
 from ..fitness import (
@@ -496,10 +505,16 @@ __all__ = [
     "ArchiveProgressTracker",
     "CandidateEvaluator",
     "CandidateGenerator",
+    "FilteredArchiveStep",
     "MaterializingArchiveSearch",
     "_SearchComponents",
     "_build_evaluated_search",
     "_build_search_components",
     "_csv_recorder",
+    "absolute_pearson_correlation",
     "canonical_expression_key",
+    "correlation_rejection",
+    "is_correlated_pairwise",
+    "validate_archive_quality_threshold",
+    "validate_correlation_threshold",
 ]

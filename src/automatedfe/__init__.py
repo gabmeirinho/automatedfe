@@ -7,12 +7,35 @@ from .encoding import (
     fit_label_mapping,
     load_label_mapping,
 )
-from .features.archive import ArchiveSnapshot, ArchiveStep, load_archive
+from .features.archive import (
+    ARCHIVE_PROXY_OBJECTIVES,
+    DEFAULT_ARCHIVE_CORRELATION_THRESHOLD,
+    DEFAULT_ARCHIVE_QUALITY_THRESHOLD,
+    ArchiveSnapshot,
+    ArchiveStep,
+    FilteredArchiveStep,
+    FilteredHistoryArchive,
+    GPArchiveStep,
+    absolute_pearson_correlation,
+    correlation_rejection,
+    is_correlated_pairwise,
+    load_archive,
+    validate_archive_quality_threshold,
+    validate_correlation_threshold,
+)
 from .features.feature_materialization import (
     FeatureMaterializer,
     materialize_aggregation,
     materialize_feature,
     materialize_individual,
+)
+from .features.runner import (
+    DIAGNOSTIC_COLUMNS,
+    RunnerDiagnosticsRecorder,
+    SearchRunResult,
+    SearchStrategy,
+    run_feature_search,
+    write_summary_json,
 )
 from .fitness import (
     FitnessEvaluator,
@@ -22,14 +45,6 @@ from .fitness import (
     ResidualFitness,
 )
 from .preprocessing import preprocess
-from .features.runner import (
-    DIAGNOSTIC_COLUMNS,
-    RunnerDiagnosticsRecorder,
-    SearchRunResult,
-    SearchStrategy,
-    run_feature_search,
-    write_summary_json,
-)
 from .sorting import (
     DEFAULT_CARD_TOKENS_INPUT,
     DEFAULT_DATASET_INPUT,
@@ -52,9 +67,10 @@ from .transaction_materialization import (
 from .validation import first_sorting_violation
 
 __all__ = [
-    "ArchiveSnapshot",
-    "ArchiveStep",
+    "ARCHIVE_PROXY_OBJECTIVES",
     "CATEGORICAL_COLUMNS",
+    "DEFAULT_ARCHIVE_CORRELATION_THRESHOLD",
+    "DEFAULT_ARCHIVE_QUALITY_THRESHOLD",
     "DEFAULT_CARD_TOKENS_INPUT",
     "DEFAULT_DATASET_INPUT",
     "DEFAULT_DATASET_OUTPUT",
@@ -63,11 +79,16 @@ __all__ = [
     "DEFAULT_MERCHANTS_INPUT",
     "DEFAULT_MMAP_DIR",
     "DEFAULT_OUTPUT",
-    "DUCKDB_MEMORY_LIMIT",
     "DIAGNOSTIC_COLUMNS",
+    "DUCKDB_MEMORY_LIMIT",
     "PROJECT_ROOT",
+    "ArchiveSnapshot",
+    "ArchiveStep",
     "FeatureMaterializer",
+    "FilteredArchiveStep",
+    "FilteredHistoryArchive",
     "FitnessEvaluator",
+    "GPArchiveStep",
     "NumericalFitnessError",
     "RandomForestFitness",
     "ResidualEvaluator",
@@ -75,12 +96,15 @@ __all__ = [
     "RunnerDiagnosticsRecorder",
     "SearchRunResult",
     "SearchStrategy",
+    "absolute_pearson_correlation",
     "column_dtype",
+    "correlation_rejection",
     "encode_transactions",
     "first_sorting_violation",
     "fit_label_mapping",
-    "load_label_mapping",
+    "is_correlated_pairwise",
     "load_archive",
+    "load_label_mapping",
     "load_mmapped_columns",
     "materialize_aggregation",
     "materialize_feature",
@@ -88,8 +112,10 @@ __all__ = [
     "materialize_transactions",
     "preprocess",
     "read_manifest",
+    "run_feature_search",
     "sort_dataset",
     "sort_transactions",
-    "run_feature_search",
+    "validate_archive_quality_threshold",
+    "validate_correlation_threshold",
     "write_summary_json",
 ]
