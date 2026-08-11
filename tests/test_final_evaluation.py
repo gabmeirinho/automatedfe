@@ -118,6 +118,8 @@ def test_final_evaluator_fits_train_and_scores_test(tmp_path):
 
     assert isinstance(result, FinalEvaluationResult)
     assert isinstance(result.model, RandomForestClassifier)
+    assert result.model.n_estimators == 500
+    assert result.model.n_jobs == -1
     # 12 train rows followed by 4 test rows, all materialized.
     assert len(evaluator.event_merchants) == 16
     assert evaluator.train_indices.tolist() == list(range(12))

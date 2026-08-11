@@ -79,6 +79,7 @@ def test_fitness_uses_ordered_training_rows_and_excludes_test_rows(tmp_path):
     assert evaluator(spec) == 1.0
     assert isinstance(evaluator.last_model, RandomForestClassifier)
     assert all(model.n_estimators == 50 for model in evaluator.last_models)
+    assert all(model.n_jobs == -1 for model in evaluator.last_models)
     assert len(evaluator.cv_splits) == 3
     assert evaluator.fold_scores == [1.0, 1.0, 1.0]
     for fit_indices, validation_indices in evaluator.cv_splits:
