@@ -10,3 +10,8 @@ gp_search.csv
 .agents/
 
 PLAN.md
+runs/
+
+# DuckDB temporary spill files
+/.tmp/
+*.tmp

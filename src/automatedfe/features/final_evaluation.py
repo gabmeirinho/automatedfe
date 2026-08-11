@@ -29,7 +29,7 @@ from .search.search import canonical_expression_key
 
 TEST_SPLIT = "test"
 ARCHIVE_MINIMIZE = (False, False, False, True)
-DEFAULT_N_ESTIMATORS = 50
+DEFAULT_N_ESTIMATORS = 500
 DEFAULT_RF_MAX_DEPTH = 10
 DEFAULT_RF_MIN_SAMPLES_LEAF = 2
 DEFAULT_RF_MAX_SAMPLES = 100_000

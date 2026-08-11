@@ -22,6 +22,14 @@ from .fitness import (
     ResidualFitness,
 )
 from .preprocessing import preprocess
+from .features.runner import (
+    DIAGNOSTIC_COLUMNS,
+    RunnerDiagnosticsRecorder,
+    SearchRunResult,
+    SearchStrategy,
+    run_feature_search,
+    write_summary_json,
+)
 from .sorting import (
     DEFAULT_CARD_TOKENS_INPUT,
     DEFAULT_DATASET_INPUT,
@@ -56,6 +64,7 @@ __all__ = [
     "DEFAULT_MMAP_DIR",
     "DEFAULT_OUTPUT",
     "DUCKDB_MEMORY_LIMIT",
+    "DIAGNOSTIC_COLUMNS",
     "PROJECT_ROOT",
     "FeatureMaterializer",
     "FitnessEvaluator",
@@ -63,6 +72,9 @@ __all__ = [
     "RandomForestFitness",
     "ResidualEvaluator",
     "ResidualFitness",
+    "RunnerDiagnosticsRecorder",
+    "SearchRunResult",
+    "SearchStrategy",
     "column_dtype",
     "encode_transactions",
     "first_sorting_violation",
@@ -78,4 +90,6 @@ __all__ = [
     "read_manifest",
     "sort_dataset",
     "sort_transactions",
+    "run_feature_search",
+    "write_summary_json",
 ]

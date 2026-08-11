@@ -51,7 +51,7 @@ def build_search_algorithm(
     budget: SearchBudget,
     *,
     mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None = None,
-    population_size: int = 20,
+    population_size: int = 50,
     seed: int = 42,
     csv_path: str | PathLike[str] | None = None,
     archive_path: str | PathLike[str] | None = None,
@@ -59,7 +59,7 @@ def build_search_algorithm(
     feature_cache_dir: str | PathLike[str] | None = None,
     dataset_path: str | PathLike[str] | None = None,
     n_splits: int = DEFAULT_N_SPLITS,
-    score_metric: str = "roc_auc",
+    score_metric: str = "brier_improvement",
     fitness_random_state: int = 42,
     max_depth: int | None = None,
 ) -> GeneticProgramming:

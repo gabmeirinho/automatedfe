@@ -53,7 +53,7 @@ def build_random_search(
     feature_cache_dir: str | PathLike[str] | None = None,
     dataset_path: str | PathLike[str] | None = None,
     n_splits: int = DEFAULT_N_SPLITS,
-    score_metric: str = "roc_auc",
+    score_metric: str = "brier_improvement",
     fitness_random_state: int = 42,
     seed: int = 42,
     max_depth: int | None = None,

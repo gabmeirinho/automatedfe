@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from os import PathLike
 
 from geneticengine.grammar.grammar import Grammar
@@ -11,7 +11,7 @@ from ..grammar import build_grammar, expr
 from .enumerative_search import (
     DEFAULT_MAX_DEPTH,
     EnumerationResult,
-    collect_unique_expressions,
+    iter_bounded_expressions,
 )
 from .search import canonical_expression_key
 
@@ -35,6 +35,7 @@ class UnboundEnumerativeSearch:
         self.expressions: tuple[expr, ...] = ()
         self.enumeration_result: EnumerationResult | None = None
         self._seen: set[str] = set()
+        self.candidate_observers: list[Callable[[expr], None]] = []
 
     @property
     def grammar_exhausted(self) -> bool:
@@ -50,10 +51,22 @@ class UnboundEnumerativeSearch:
     def search(self) -> list[expr]:
         """Generate and return expressions in deterministic grammar order."""
 
-        self.enumeration_result = collect_unique_expressions(
+        stream = iter_bounded_expressions(
             self.grammar,
-            self.candidate_count,
             max_depth=self.max_depth,
+        )
+        expressions: list[expr] = []
+        while len(expressions) < self.candidate_count:
+            try:
+                expression = next(stream)
+            except StopIteration:
+                break
+            expressions.append(expression)
+            for observer in self.candidate_observers:
+                observer(expression)
+        self.enumeration_result = EnumerationResult(
+            tuple(expressions),
+            stream.exhausted,
         )
         self.expressions = self.enumeration_result.expressions
         self.generated_count = len(self.expressions)
