@@ -9,7 +9,7 @@ from geneticengine.problems import MultiObjectiveProblem
 from geneticengine.solutions.individual import ConcreteIndividual
 
 from automatedfe.features.archive import (
-    FilteredArchiveStep,
+    ActiveSetManager,
     absolute_pearson_correlation,
     correlation_rejection,
 )
@@ -55,7 +55,7 @@ def test_correlation_helpers_are_absolute_and_thresholds_are_inclusive():
     ] is False
 
 
-def test_filtered_archive_applies_quality_history_and_peer_filters_in_order():
+def test_active_set_manager_applies_quality_history_and_peer_filters_in_order():
     scores = {
         "a": (0.8, 0.8, 0.8, 1.0),
         "b": (0.8, 0.9, 0.7, 2.0),
@@ -71,7 +71,7 @@ def test_filtered_archive_applies_quality_history_and_peer_filters_in_order():
         "low": np.array([3.0, 1.0, 2.0, 0.0]),
     }
     problem = make_problem(scores)
-    step = FilteredArchiveStep(signal_provider=lambda expression: signals[expression.name])
+    step = ActiveSetManager(signal_provider=lambda expression: signals[expression.name])
 
     run(
         step,
@@ -81,7 +81,6 @@ def test_filtered_archive_applies_quality_history_and_peer_filters_in_order():
     )
 
     assert [item.get_phenotype().name for item in step.history] == ["a", "c"]
-    assert [item.get_phenotype().name for item in step.archive] == ["a", "b", "c"]
     assert step.history_objectives == (
         scores["a"],
         scores["c"],
@@ -96,7 +95,7 @@ def test_filtered_archive_applies_quality_history_and_peer_filters_in_order():
     assert any(item["reason"] == "quality_threshold" for item in step.filter_diagnostics)
 
 
-def test_filtered_archive_rejects_invalid_signals_and_preserves_admission_objectives():
+def test_active_set_manager_rejects_invalid_signals_and_preserves_admission_objectives():
     scores = {
         "a": (0.8, 0.8, 0.8, 1.0),
         "duplicate": (0.8, 0.8, 0.8, 1.0),
@@ -112,7 +111,7 @@ def test_filtered_archive_rejects_invalid_signals_and_preserves_admission_object
         "empty": np.array([]),
     }
     problem = make_problem(scores)
-    step = FilteredArchiveStep(signal_provider=lambda expression: signals[expression.name])
+    step = ActiveSetManager(signal_provider=lambda expression: signals[expression.name])
     run(step, problem, [Expression("a")], generation=0)
     original = step.history_objectives
 
@@ -137,6 +136,6 @@ def test_filtered_archive_rejects_invalid_signals_and_preserves_admission_object
 
 
 @pytest.mark.parametrize("kwargs", [{"archive_correlation_threshold": -0.1}, {"archive_correlation_threshold": 1.1}, {"archive_quality_threshold": -1.0}])
-def test_filtered_archive_validates_thresholds(kwargs):
+def test_active_set_manager_validates_thresholds(kwargs):
     with pytest.raises(ValueError):
-        FilteredArchiveStep(**kwargs)
+        ActiveSetManager(**kwargs)

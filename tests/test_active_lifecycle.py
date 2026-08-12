@@ -3,7 +3,8 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from automatedfe.features.archive import FilteredArchiveStep
+from automatedfe.features.archive import ActiveSetManager, ArchiveStep
+from geneticengine.evaluation.sequential import SequentialEvaluator
 from automatedfe.features.search.search import CandidateEvaluator, MaterializingArchiveSearch
 from geneticengine.problems import Fitness, MultiObjectiveProblem
 from geneticengine.solutions.individual import ConcreteIndividual
@@ -30,7 +31,7 @@ def test_first_promotion_selects_sequential_winners_and_versions():
         lambda expression: list(scores[expression.name]),
         minimize=[False, False, False, True],
     )
-    archive = FilteredArchiveStep(
+    archive = ActiveSetManager(
         signal_provider=lambda expression: signals[expression.name],
         use_active_set=True,
         promotion_refresh_top_n=0,
@@ -80,6 +81,47 @@ def test_first_promotion_selects_sequential_winners_and_versions():
         for row in archive.promotion_checks
         if row["outcome"] == "promoted"
     ] == [0, 1]
+
+
+def test_active_set_manager_does_not_change_canonical_archive_membership():
+    scores = {
+        "a": (0.8, 0.8, 0.8, 1.0),
+        "b": (0.8, 0.9, 0.7, 2.0),
+        "c": (0.9, 0.9, 0.9, 3.0),
+    }
+    signals = {
+        "a": np.array([0.0, 1.0, 2.0, 3.0]),
+        "b": np.array([0.0, 2.0, 4.0, 6.0]),
+        "c": np.array([3.0, 0.0, 2.0, 1.0]),
+    }
+    problem = MultiObjectiveProblem(
+        lambda expression: list(scores[expression.name]),
+        minimize=[False, False, False, True],
+    )
+    individuals = [ConcreteIndividual(Expression(name)) for name in scores]
+    for individual in individuals:
+        individual.set_fitness(problem, problem.evaluate(individual.get_phenotype()))
+
+    archive = ArchiveStep()
+    manager = ActiveSetManager(
+        signal_provider=lambda expression: signals[expression.name],
+        use_active_set=True,
+    )
+    evaluated = list(
+        archive.apply(
+            problem,
+            SequentialEvaluator(),
+            representation=None,
+            random=None,
+            population=iter(individuals),
+            target_size=len(individuals),
+            generation=0,
+        )
+    )
+    manager.process_evaluated_population(problem, evaluated, generation=0)
+
+    assert [item.get_phenotype().name for item in archive.archive] == ["a", "b", "c"]
+    assert [item.get_phenotype().name for item in manager.history] == ["a", "c"]
 
 
 def test_candidate_evaluator_invalidates_fitness_after_baseline_refresh():
@@ -157,7 +199,7 @@ def test_archive_is_reevaluated_and_rebuilt_after_baseline_change():
         lambda expression: scores[version["value"]][expression.name],
         minimize=[False, False, False, True],
     )
-    archive = FilteredArchiveStep()
+    archive = ActiveSetManager()
     individuals = [ConcreteIndividual(Expression(name)) for name in ("a", "b")]
     for individual in individuals:
         individual.set_fitness(

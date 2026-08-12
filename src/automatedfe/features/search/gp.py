@@ -91,7 +91,6 @@ def build_search_algorithm(
         seed=seed,
         max_depth=max_depth,
         archive_path=archive_path,
-        use_filtered_archive=True,
         use_active_set=use_active_set,
         promotion_interval=promotion_interval,
         first_promotion_top_k=first_promotion_top_k,
@@ -112,8 +111,8 @@ def build_search_algorithm(
         components.problem,
         components.archive_step,
         baseline_version_provider=(
-            (lambda: components.archive_step.baseline_version)
-            if hasattr(components.archive_step, "baseline_version")
+            (lambda: components.active_set_manager.baseline_version)
+            if components.active_set_manager is not None
             else None
         ),
         recorders=[] if recorder is None else [recorder],
@@ -129,6 +128,7 @@ def build_search_algorithm(
         materializer=components.materializer,
         fitness_evaluator=components.fitness_evaluator,
         archive_step=components.archive_step,
+        active_set_manager=components.active_set_manager,
         step=generation_step,
     )
 

@@ -33,8 +33,8 @@ from geneticengine.representations.tree.treebased import TreeBasedRepresentation
 from geneticengine.solutions.individual import Individual, PhenotypicIndividual
 
 from ..archive import (
+    ActiveSetManager,
     ArchiveStep,
-    FilteredArchiveStep,
     absolute_pearson_correlation,
     correlation_rejection,
     encode_expression,
@@ -81,6 +81,7 @@ class _SearchComponents:
     fitness_evaluator: Any
     problem: MultiObjectiveProblem
     archive_step: ArchiveStep
+    active_set_manager: ActiveSetManager | None
     random: NativeRandomSource
     max_depth: int
 
@@ -97,7 +98,6 @@ def _build_search_components(
     seed: int = 42,
     max_depth: int | None = None,
     archive_path: str | PathLike[str] | None = None,
-    use_filtered_archive: bool = False,
     use_active_set: bool = False,
     promotion_interval: int = 5,
     first_promotion_top_k: int = 2,
@@ -118,8 +118,6 @@ def _build_search_components(
         raise ValueError("dataset_path is required for archive search")
     if n_splits != 3:
         raise ValueError("Archive mode requires exactly three folds")
-    if use_active_set and not use_filtered_archive:
-        raise ValueError("use_active_set requires the filtered GP archive")
     if use_active_set and score_metric != "brier_improvement":
         raise ValueError("use_active_set requires score_metric='brier_improvement'")
     if promotion_corr_threshold_active is not None:
@@ -147,8 +145,8 @@ def _build_search_components(
             dataset_path,
             n_splits=n_splits,
             score_metric=score_metric,
-            active_provider=lambda: archive_holder["archive"].active_individuals,
-            baseline_version_provider=lambda: archive_holder["archive"].baseline_version,
+            active_provider=lambda: archive_holder["active_set"].active_individuals,
+            baseline_version_provider=lambda: archive_holder["active_set"].baseline_version,
         )
     elif score_metric in {"brier", "brier_improvement"}:
         fitness_evaluator = ResidualEvaluator(
@@ -181,13 +179,12 @@ def _build_search_components(
                 "archive_path must identify a file, not a directory: "
                 f"{resolved_archive_path}"
             )
-    if use_filtered_archive:
+    active_set_manager: ActiveSetManager | None = None
+    if use_active_set:
         signal_provider = getattr(fitness_evaluator, "_values_for", None)
-        archive_step = FilteredArchiveStep(
-            archive_path=archive_path,
-            mapping=mapping,
+        active_set_manager = ActiveSetManager(
             signal_provider=signal_provider if callable(signal_provider) else None,
-            use_active_set=use_active_set,
+            use_active_set=True,
             promotion_interval=promotion_interval,
             first_promotion_top_k=first_promotion_top_k,
             promotion_add_k=promotion_add_k,
@@ -198,9 +195,11 @@ def _build_search_components(
             promotion_min_gain=promotion_min_gain,
             promotion_mean_gain=promotion_mean_gain,
         )
-        archive_holder["archive"] = archive_step
-    else:
-        archive_step = ArchiveStep(archive_path=archive_path, mapping=mapping)
+        archive_holder["active_set"] = active_set_manager
+
+    # Every evaluated strategy uses the same canonical archive policy.  The
+    # active-set manager is auxiliary state and never filters this archive.
+    archive_step = ArchiveStep(archive_path=archive_path, mapping=mapping)
     return _SearchComponents(
         grammar=grammar,
         representation=representation,
@@ -208,6 +207,7 @@ def _build_search_components(
         fitness_evaluator=fitness_evaluator,
         problem=problem,
         archive_step=archive_step,
+        active_set_manager=active_set_manager,
         random=random,
         max_depth=max_depth,
     )
@@ -384,6 +384,7 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
         materializer: Any,
         fitness_evaluator: Any,
         archive_step: ArchiveStep,
+        active_set_manager: ActiveSetManager | None = None,
         candidate_generator: CandidateGenerator | None = None,
         deduplicate: bool = False,
         **kwargs: object,
@@ -393,6 +394,7 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
         self.fitness_evaluator = fitness_evaluator
         self.archive_step = archive_step
         self.archive = archive_step
+        self.active_set_manager = active_set_manager
         self.candidate_generator = candidate_generator
         self.deduplicate = deduplicate
         self._seen: set[str] = set()
@@ -457,7 +459,12 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
         if generation in self._promotion_boundaries:
             return False
         self._promotion_boundaries.add(generation)
-        maybe_promote = getattr(self.archive_step, "maybe_promote", None)
+        promotion_owner = getattr(self, "active_set_manager", None)
+        if promotion_owner is None:
+            # Compatibility for callers that construct the lifecycle with an
+            # older archive object that owns promotion state itself.
+            promotion_owner = self.archive_step
+        maybe_promote = getattr(promotion_owner, "maybe_promote", None)
         if not callable(maybe_promote):
             return False
         try:
@@ -551,6 +558,12 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
                     generation,
                 )
             )
+            if self.active_set_manager is not None:
+                self.active_set_manager.process_evaluated_population(
+                    self.problem,
+                    archived,
+                    generation,
+                )
             current_population = Population(
                 iter(archived),
                 self.tracker,
@@ -564,13 +577,11 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
             )
             generation += 1
 
-        if isinstance(self.archive_step, FilteredArchiveStep):
-            self.history = list(self.archive_step.history)
-            self.active_individuals = list(self.archive_step.active_individuals)
-            # Keep the legacy front as a compatibility fallback when the
-            # admission filters reject every candidate.  Non-empty filtered
-            # runs return their complete history in admission order.
-            return self.history or list(self.archive_step.archive)
+        if self.active_set_manager is not None:
+            self.history = list(self.active_set_manager.history)
+            self.active_individuals = list(
+                self.active_set_manager.active_individuals
+            )
         return list(self.archive_step.archive)
 
     def precompute_population(
@@ -609,7 +620,6 @@ def _build_evaluated_search(
     max_depth: int | None = None,
     csv_path: str | PathLike[str] | None = None,
     archive_path: str | PathLike[str] | None = None,
-    use_filtered_archive: bool = False,
     use_active_set: bool = False,
     promotion_interval: int = 5,
     first_promotion_top_k: int = 2,
@@ -637,7 +647,6 @@ def _build_evaluated_search(
         seed=seed,
         max_depth=max_depth,
         archive_path=archive_path,
-        use_filtered_archive=use_filtered_archive,
         use_active_set=use_active_set,
         promotion_interval=promotion_interval,
         first_promotion_top_k=first_promotion_top_k,
@@ -658,8 +667,8 @@ def _build_evaluated_search(
         components.problem,
         components.archive_step,
         baseline_version_provider=(
-            (lambda: components.archive_step.baseline_version)
-            if isinstance(components.archive_step, FilteredArchiveStep)
+            (lambda: components.active_set_manager.baseline_version)
+            if components.active_set_manager is not None
             else None
         ),
         recorders=[] if recorder is None else [recorder],
@@ -674,6 +683,7 @@ def _build_evaluated_search(
         materializer=components.materializer,
         fitness_evaluator=components.fitness_evaluator,
         archive_step=components.archive_step,
+        active_set_manager=components.active_set_manager,
         candidate_generator=candidate_generator,
         deduplicate=True,
     )
@@ -683,9 +693,9 @@ __all__ = [
     "ARCHIVE_MINIMIZE",
     "DEFAULT_MAX_DEPTH",
     "ArchiveProgressTracker",
+    "ActiveSetManager",
     "CandidateEvaluator",
     "CandidateGenerator",
-    "FilteredArchiveStep",
     "MaterializingArchiveSearch",
     "_SearchComponents",
     "_build_evaluated_search",

@@ -660,13 +660,8 @@ class ArchiveStep(GeneticStep):
         )
 
 
-class FilteredArchiveStep(ArchiveStep):
-    """Maintain the filtered history used by the GP archive variant.
-
-    The ordinary :class:`ArchiveStep` is intentionally left unchanged for
-    enumerative and random search.  This subclass adds the GP admission
-    state while retaining the inherited ``archive`` front and its JSON
-    serialization contract.
+class _ActiveSetManagerBase(ArchiveStep):
+    """Shared implementation for active-set history and promotion state.
 
     For every generation, the complete evaluated population is first reduced
     to its four-objective Pareto front.  That generation front is then
@@ -1411,11 +1406,60 @@ class FilteredArchiveStep(ArchiveStep):
         )
 
 
-# The aliases make the state machine discoverable under the two names used by
-# the plan and by the reference implementation, without creating separate
-# behavior or state.
-GPArchiveStep = FilteredArchiveStep
-FilteredHistoryArchive = FilteredArchiveStep
+class ActiveSetManager(_ActiveSetManagerBase):
+    """Maintain active-set history without owning the canonical archive.
+
+    ``ArchiveStep`` is the only component responsible for the persisted and
+    returned Pareto front.  This manager reuses the active-set admission and
+    promotion policy from the shared implementation, but its per-generation
+    processing only updates history and promotion state.  The archive list
+    inherited from the common archive base is intentionally not consulted or
+    mutated by ``process_evaluated_population``.
+    """
+
+    def process_evaluated_population(
+        self,
+        problem: Problem,
+        population_list: Sequence[PhenotypicIndividual],
+        generation: int,
+        evaluator: Evaluator | None = None,
+    ) -> list[PhenotypicIndividual]:
+        """Record active-set history from an already evaluated population."""
+
+        del evaluator
+        self._validate_problem(problem)
+        self._problem = problem
+        evaluated = list(population_list)
+        valid = self._valid_unique_with_diagnostics(evaluated, problem, generation)
+        generation_front = list(non_dominated(iter(valid), problem))
+        generation_front_keys = {
+            self._expression_key(individual) for individual in generation_front
+        }
+        for individual in valid:
+            key = self._expression_key(individual)
+            if key not in generation_front_keys:
+                self._record_diagnostic(
+                    generation=generation,
+                    individual=individual,
+                    outcome="not_pareto",
+                    reason="dominated_in_generation",
+                )
+
+        self._admit_generation(generation_front, problem, generation)
+        self.generation_diagnostics.append(
+            {
+                "generation": generation,
+                "population_size": len(evaluated),
+                "valid_size": len(valid),
+                "front_size": len(generation_front),
+                "history_size": len(self.history),
+            }
+        )
+        return generation_front
+
+
+# Keep the GP archive alias pointed at the canonical archive.
+GPArchiveStep = ArchiveStep
 
 
 __all__ = [
@@ -1434,8 +1478,7 @@ __all__ = [
     "OBJECTIVES_PER_ARCHIVE",
     "ArchiveSnapshot",
     "ArchiveStep",
-    "FilteredArchiveStep",
-    "FilteredHistoryArchive",
+    "ActiveSetManager",
     "GPArchiveStep",
     "absolute_pearson_correlation",
     "correlation_rejection",

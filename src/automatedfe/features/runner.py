@@ -683,7 +683,10 @@ def run_feature_search(
     active_set_expressions: tuple[expr, ...] = ()
     active_mode = bool(
         selected_strategy is SearchStrategy.GENETIC
-        and getattr(getattr(search, "archive_step", None), "use_active_set", False)
+        and (
+            getattr(search, "active_set_manager", None) is not None
+            or getattr(getattr(search, "archive_step", None), "use_active_set", False)
+        )
     )
     if active_mode:
         expressions, objectives = _archive_expressions_and_objectives(
@@ -692,7 +695,11 @@ def run_feature_search(
         )
         active_set_expressions = tuple(
             _as_expression(individual)
-            for individual in getattr(search.archive_step, "active_individuals", ())
+            for individual in getattr(
+                getattr(search, "active_set_manager", search.archive_step),
+                "active_individuals",
+                (),
+            )
         )
     elif selected_strategy in _EVALUATED_STRATEGIES:
         expressions, objectives = _archive_expressions_and_objectives(
