@@ -7,6 +7,7 @@ import logging
 import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from inspect import signature
 from os import PathLike
 from pathlib import Path
 from time import monotonic_ns
@@ -45,6 +46,7 @@ from ..feature_materialization import FeatureMaterializer
 from ..feature_types import TxFeature
 from ..fitness import (
     DEFAULT_N_SPLITS,
+    ActiveResidualEvaluator,
     NumericalFitnessError,
     RandomForestFitness,
     ResidualEvaluator,
@@ -95,6 +97,20 @@ def _build_search_components(
     seed: int = 42,
     max_depth: int | None = None,
     archive_path: str | PathLike[str] | None = None,
+    use_filtered_archive: bool = False,
+    use_active_set: bool = False,
+    promotion_interval: int = 5,
+    first_promotion_top_k: int = 2,
+    promotion_add_k: int = 1,
+    promotion_refresh_top_n: int = 50,
+    archive_quality_threshold: float = 0.001,
+    archive_correlation_threshold: float = 0.85,
+    active_correlation_threshold: float = 0.90,
+    promotion_min_gain: float = 0.0,
+    promotion_mean_gain: float = 0.0005,
+    promotion_corr_threshold_active: float | None = None,
+    promotion_min_delta_threshold: float | None = None,
+    promotion_min_mean_delta_threshold: float | None = None,
 ) -> _SearchComponents:
     """Build the grammar, evaluator, problem, and archive foundation."""
 
@@ -102,6 +118,16 @@ def _build_search_components(
         raise ValueError("dataset_path is required for archive search")
     if n_splits != 3:
         raise ValueError("Archive mode requires exactly three folds")
+    if use_active_set and not use_filtered_archive:
+        raise ValueError("use_active_set requires the filtered GP archive")
+    if use_active_set and score_metric != "brier_improvement":
+        raise ValueError("use_active_set requires score_metric='brier_improvement'")
+    if promotion_corr_threshold_active is not None:
+        active_correlation_threshold = promotion_corr_threshold_active
+    if promotion_min_delta_threshold is not None:
+        promotion_min_gain = promotion_min_delta_threshold
+    if promotion_min_mean_delta_threshold is not None:
+        promotion_mean_gain = promotion_min_mean_delta_threshold
     grammar = build_grammar(mapping)
     if max_depth is None:
         max_depth = DEFAULT_MAX_DEPTH
@@ -114,7 +140,17 @@ def _build_search_components(
         grammar,
         MaxDepthDecider(random, grammar, max_depth=max_depth),
     )
-    if score_metric in {"brier", "brier_improvement"}:
+    archive_holder: dict[str, Any] = {}
+    if score_metric in {"brier", "brier_improvement"} and use_active_set:
+        fitness_evaluator = ActiveResidualEvaluator(
+            materializer,
+            dataset_path,
+            n_splits=n_splits,
+            score_metric=score_metric,
+            active_provider=lambda: archive_holder["archive"].active_individuals,
+            baseline_version_provider=lambda: archive_holder["archive"].baseline_version,
+        )
+    elif score_metric in {"brier", "brier_improvement"}:
         fitness_evaluator = ResidualEvaluator(
             materializer,
             dataset_path,
@@ -145,7 +181,26 @@ def _build_search_components(
                 "archive_path must identify a file, not a directory: "
                 f"{resolved_archive_path}"
             )
-    archive_step = ArchiveStep(archive_path=archive_path, mapping=mapping)
+    if use_filtered_archive:
+        signal_provider = getattr(fitness_evaluator, "_values_for", None)
+        archive_step = FilteredArchiveStep(
+            archive_path=archive_path,
+            mapping=mapping,
+            signal_provider=signal_provider if callable(signal_provider) else None,
+            use_active_set=use_active_set,
+            promotion_interval=promotion_interval,
+            first_promotion_top_k=first_promotion_top_k,
+            promotion_add_k=promotion_add_k,
+            promotion_refresh_top_n=promotion_refresh_top_n,
+            archive_quality_threshold=archive_quality_threshold,
+            archive_correlation_threshold=archive_correlation_threshold,
+            active_correlation_threshold=active_correlation_threshold,
+            promotion_min_gain=promotion_min_gain,
+            promotion_mean_gain=promotion_mean_gain,
+        )
+        archive_holder["archive"] = archive_step
+    else:
+        archive_step = ArchiveStep(archive_path=archive_path, mapping=mapping)
     return _SearchComponents(
         grammar=grammar,
         representation=representation,
@@ -179,12 +234,28 @@ def canonical_expression_key(expression: object) -> str:
 class CandidateEvaluator(SequentialEvaluator):
     """Turn candidate-local numerical failures into invalid fitness."""
 
-    def __init__(self) -> None:
+    def __init__(self, baseline_version_provider: Callable[[], int] | None = None) -> None:
         super().__init__()
         self.invalid_reasons: dict[str, str] = {}
+        self.baseline_version_provider = baseline_version_provider
+
+    @property
+    def baseline_version(self) -> int | None:
+        if self.baseline_version_provider is None:
+            return None
+        return int(self.baseline_version_provider())
+
+    def _invalidate_if_stale(self, individual: Individual, problem: Problem) -> None:
+        version = self.baseline_version
+        if version is None:
+            return
+        if individual.metadata.get("evaluated_baseline_version") == version:
+            return
+        individual.fitness_store.pop(problem, None)
 
     def evaluate_async(self, problem: Problem, individuals: Iterable[Individual]):
         for individual in individuals:
+            self._invalidate_if_stale(individual, problem)
             if individual.has_fitness(problem):
                 yield individual
                 continue
@@ -223,6 +294,9 @@ class CandidateEvaluator(SequentialEvaluator):
                     valid=fitness.valid,
                 ),
             )
+            version = self.baseline_version
+            if version is not None:
+                individual.metadata["evaluated_baseline_version"] = version
             self.register_evaluation(individual, problem)
             yield individual
 
@@ -236,11 +310,18 @@ class ArchiveProgressTracker(ProgressTracker):
         archive_step: ArchiveStep,
         *,
         evaluator: Evaluator | None = None,
+        baseline_version_provider: Callable[[], int] | None = None,
         recorders: list[object] | None = None,
     ) -> None:
         self.start_time = monotonic_ns()
         self.problem = problem
-        self.evaluator = evaluator if evaluator is not None else CandidateEvaluator()
+        self.evaluator = (
+            evaluator
+            if evaluator is not None
+            else CandidateEvaluator(
+                baseline_version_provider=baseline_version_provider,
+            )
+        )
         self.recorders = [] if recorders is None else recorders
         self.archive_step = archive_step
         self.memory = None
@@ -321,6 +402,9 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
         self.invalid_count = 0
         self.accepted_individuals: list[PhenotypicIndividual] = []
         self.last_individuals: list[PhenotypicIndividual] = []
+        self.history: list[PhenotypicIndividual] = []
+        self.active_individuals: list[PhenotypicIndividual] = []
+        self._promotion_boundaries: set[int] = set()
 
     @property
     def grammar_exhausted(self) -> bool:
@@ -353,6 +437,40 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
                 generation,
             )
         return self._generate_candidates(current_individuals, generation)
+
+    def _invalidate_population_fitness(
+        self,
+        individuals: Iterable[PhenotypicIndividual],
+    ) -> None:
+        """Drop fitness copied into a population before an active refresh."""
+
+        for individual in individuals:
+            individual.fitness_store.pop(self.problem, None)
+
+    def _promote_at_boundary(self, generation: int) -> bool:
+        """Run one idempotent active promotion boundary."""
+
+        if generation in self._promotion_boundaries:
+            return False
+        self._promotion_boundaries.add(generation)
+        maybe_promote = getattr(self.archive_step, "maybe_promote", None)
+        if not callable(maybe_promote):
+            return False
+        try:
+            parameters = signature(maybe_promote).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if "evaluator" in parameters:
+            changed = maybe_promote(
+                self.problem,
+                generation,
+                evaluator=self.tracker.evaluator,
+            )
+        else:
+            changed = maybe_promote(self.problem, generation)
+        if changed and hasattr(self.fitness_evaluator, "invalidate_baseline_cache"):
+            self.fitness_evaluator.invalidate_baseline_cache()
+        return bool(changed)
 
     def _generate_candidates(
         self,
@@ -388,6 +506,11 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
         current_individuals: list[PhenotypicIndividual] = []
 
         while generation == 0 or not self.is_done():
+            if generation > 0 and self._promote_at_boundary(generation):
+                # Reproduction can carry elite individuals into the next
+                # generation.  They must not retain scores from the previous
+                # active baseline while the generation is being prepared.
+                self._invalidate_population_fitness(current_individuals)
             generated = (
                 self._generate_initial_individuals()
                 if generation == 0
@@ -428,6 +551,13 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
             )
             generation += 1
 
+        if isinstance(self.archive_step, FilteredArchiveStep):
+            self.history = list(self.archive_step.history)
+            self.active_individuals = list(self.archive_step.active_individuals)
+            # Keep the legacy front as a compatibility fallback when the
+            # admission filters reject every candidate.  Non-empty filtered
+            # runs return their complete history in admission order.
+            return self.history or list(self.archive_step.archive)
         return list(self.archive_step.archive)
 
     def precompute_population(
@@ -437,6 +567,8 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
     ) -> None:
         """Prepare generated individuals before their evaluation."""
 
+        if self._promote_at_boundary(generation):
+            self._invalidate_population_fitness(individuals)
         self.last_individuals = list(individuals)
         phenotypes = [individual.get_phenotype() for individual in individuals]
         logger.info(
@@ -462,6 +594,20 @@ def _build_evaluated_search(
     max_depth: int | None = None,
     csv_path: str | PathLike[str] | None = None,
     archive_path: str | PathLike[str] | None = None,
+    use_filtered_archive: bool = False,
+    use_active_set: bool = False,
+    promotion_interval: int = 5,
+    first_promotion_top_k: int = 2,
+    promotion_add_k: int = 1,
+    promotion_refresh_top_n: int = 50,
+    archive_quality_threshold: float = 0.001,
+    archive_correlation_threshold: float = 0.85,
+    active_correlation_threshold: float = 0.90,
+    promotion_min_gain: float = 0.0,
+    promotion_mean_gain: float = 0.0005,
+    promotion_corr_threshold_active: float | None = None,
+    promotion_min_delta_threshold: float | None = None,
+    promotion_min_mean_delta_threshold: float | None = None,
 ) -> MaterializingArchiveSearch:
     """Build a candidate-generating strategy on the shared lifecycle."""
 
@@ -476,12 +622,31 @@ def _build_evaluated_search(
         seed=seed,
         max_depth=max_depth,
         archive_path=archive_path,
+        use_filtered_archive=use_filtered_archive,
+        use_active_set=use_active_set,
+        promotion_interval=promotion_interval,
+        first_promotion_top_k=first_promotion_top_k,
+        promotion_add_k=promotion_add_k,
+        promotion_refresh_top_n=promotion_refresh_top_n,
+        archive_quality_threshold=archive_quality_threshold,
+        archive_correlation_threshold=archive_correlation_threshold,
+        active_correlation_threshold=active_correlation_threshold,
+        promotion_min_gain=promotion_min_gain,
+        promotion_mean_gain=promotion_mean_gain,
+        promotion_corr_threshold_active=promotion_corr_threshold_active,
+        promotion_min_delta_threshold=promotion_min_delta_threshold,
+        promotion_min_mean_delta_threshold=promotion_min_mean_delta_threshold,
     )
     candidate_generator = candidate_generator_factory(components)
     recorder = _csv_recorder(csv_path, components.problem)
     tracker = ArchiveProgressTracker(
         components.problem,
         components.archive_step,
+        baseline_version_provider=(
+            (lambda: components.archive_step.baseline_version)
+            if isinstance(components.archive_step, FilteredArchiveStep)
+            else None
+        ),
         recorders=[] if recorder is None else [recorder],
     )
     return MaterializingArchiveSearch(

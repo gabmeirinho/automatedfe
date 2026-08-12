@@ -34,6 +34,13 @@ OBJECTIVES_PER_ARCHIVE = 4
 ARCHIVE_PROXY_OBJECTIVES = 3
 DEFAULT_ARCHIVE_QUALITY_THRESHOLD = 0.001
 DEFAULT_ARCHIVE_CORRELATION_THRESHOLD = 0.85
+DEFAULT_ACTIVE_CORRELATION_THRESHOLD = 0.90
+DEFAULT_PROMOTION_INTERVAL = 5
+DEFAULT_FIRST_PROMOTION_TOP_K = 2
+DEFAULT_PROMOTION_ADD_K = 1
+DEFAULT_PROMOTION_REFRESH_TOP_N = 50
+DEFAULT_PROMOTION_MIN_GAIN = 0.0
+DEFAULT_PROMOTION_MEAN_GAIN = 0.0005
 
 _NODE_TYPES: dict[str, type] = {
     node_type.__name__: node_type
@@ -669,6 +676,18 @@ class FilteredArchiveStep(ArchiveStep):
         signal_provider: Callable[[object], object] | None = None,
         archive_quality_threshold: float = DEFAULT_ARCHIVE_QUALITY_THRESHOLD,
         archive_correlation_threshold: float = DEFAULT_ARCHIVE_CORRELATION_THRESHOLD,
+        use_active_set: bool = False,
+        promotion_interval: int = DEFAULT_PROMOTION_INTERVAL,
+        first_promotion_top_k: int = DEFAULT_FIRST_PROMOTION_TOP_K,
+        promotion_add_k: int = DEFAULT_PROMOTION_ADD_K,
+        promotion_refresh_top_n: int = DEFAULT_PROMOTION_REFRESH_TOP_N,
+        active_correlation_threshold: float = DEFAULT_ACTIVE_CORRELATION_THRESHOLD,
+        promotion_min_gain: float = DEFAULT_PROMOTION_MIN_GAIN,
+        promotion_mean_gain: float = DEFAULT_PROMOTION_MEAN_GAIN,
+        # Reference-compatible spellings.
+        promotion_corr_threshold_active: float | None = None,
+        promotion_min_delta_threshold: float | None = None,
+        promotion_min_mean_delta_threshold: float | None = None,
         # These aliases keep the component convenient to use from focused
         # tests and make the terminology match both the plan and the reference.
         min_proxy_improvement: float | None = None,
@@ -689,9 +708,47 @@ class FilteredArchiveStep(ArchiveStep):
         self.archive_correlation_threshold = validate_correlation_threshold(
             archive_correlation_threshold
         )
+        if not isinstance(use_active_set, bool):
+            raise ValueError("use_active_set must be a boolean")
+        if promotion_corr_threshold_active is not None:
+            active_correlation_threshold = promotion_corr_threshold_active
+        if promotion_min_delta_threshold is not None:
+            promotion_min_gain = promotion_min_delta_threshold
+        if promotion_min_mean_delta_threshold is not None:
+            promotion_mean_gain = promotion_min_mean_delta_threshold
+        for name, value in (
+            ("promotion_interval", promotion_interval),
+            ("first_promotion_top_k", first_promotion_top_k),
+            ("promotion_add_k", promotion_add_k),
+            ("promotion_refresh_top_n", promotion_refresh_top_n),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        if promotion_interval == 0:
+            raise ValueError("promotion_interval must be positive")
+        try:
+            promotion_min_gain = float(promotion_min_gain)
+            promotion_mean_gain = float(promotion_mean_gain)
+        except (TypeError, ValueError) as error:
+            raise ValueError("promotion gain thresholds must be finite numbers") from error
+        if not math.isfinite(promotion_min_gain) or not math.isfinite(promotion_mean_gain):
+            raise ValueError("promotion gain thresholds must be finite numbers")
         self.signal_provider = (
             signal_provider if signal_provider is not None else signal_function
         )
+        self.use_active_set = use_active_set
+        self.promotion_interval = promotion_interval
+        self.first_promotion_top_k = first_promotion_top_k
+        self.promotion_add_k = promotion_add_k
+        self.promotion_refresh_top_n = promotion_refresh_top_n
+        self.active_correlation_threshold = validate_correlation_threshold(
+            active_correlation_threshold
+        )
+        self.promotion_corr_threshold_active = self.active_correlation_threshold
+        self.promotion_min_gain = promotion_min_gain
+        self.promotion_mean_gain = promotion_mean_gain
+        self.promotion_min_delta_threshold = promotion_min_gain
+        self.promotion_min_mean_delta_threshold = promotion_mean_gain
         self.history: list[PhenotypicIndividual] = []
         self.admission_objectives: dict[str, tuple[float, ...]] = {}
         self._history_signals: list[np.ndarray] = []
@@ -702,6 +759,12 @@ class FilteredArchiveStep(ArchiveStep):
         # ``admission_diagnostics`` alias.
         self.filter_diagnostics = self.admission_diagnostics
         self.generation_diagnostics: list[dict[str, object]] = []
+        self.active_individuals: list[PhenotypicIndividual] = []
+        self.baseline_version = 0
+        self.promotion_events: list[dict[str, object]] = []
+        self.promotion_checks: list[dict[str, object]] = []
+        self.exact_check_history = self.promotion_checks
+        self.promotion_diagnostics = self.promotion_checks
 
     @property
     def history_individuals(self) -> tuple[PhenotypicIndividual, ...]:
@@ -730,6 +793,263 @@ class FilteredArchiveStep(ArchiveStep):
         """Return structural identities admitted to history."""
 
         return frozenset(self._history_keys)
+
+    @property
+    def active_keys(self) -> frozenset[str]:
+        """Return structural identities in promotion order."""
+
+        return frozenset(
+            self._expression_key(individual) for individual in self.active_individuals
+        )
+
+    def maybe_promote(
+        self,
+        problem: Problem,
+        generation: int,
+        evaluator: Evaluator | None = None,
+    ) -> bool:
+        """Promote complementary history candidates at an interval boundary.
+
+        Winners are selected one at a time.  Every winner advances
+        ``baseline_version`` before the next candidate is scored, so the
+        evaluator cannot accidentally compare a later winner with a stale
+        active baseline.
+        """
+
+        if (
+            not self.use_active_set
+            or generation <= 0
+            or generation % self.promotion_interval != 0
+            or not self.history
+        ):
+            return False
+
+        if evaluator is not None and self.promotion_refresh_top_n:
+            self._refresh_history(evaluator, problem)
+
+        requested = (
+            self.first_promotion_top_k
+            if not self.active_individuals
+            else self.promotion_add_k
+        )
+        if requested <= 0:
+            return False
+
+        promoted = 0
+        phase = "first_promotion" if not self.active_individuals else "incremental_promotion"
+        for _ in range(requested):
+            winner = self._select_promotion_winner(
+                problem,
+                generation,
+                evaluator,
+                phase=phase,
+            )
+            if winner is None:
+                break
+            candidate, gains, check_index = winner
+            self.promotion_checks[check_index]["outcome"] = "promoted"
+            self.promotion_checks[check_index]["reason"] = (
+                "first_promotion_winner"
+                if phase == "first_promotion"
+                else "incremental_promotion_winner"
+            )
+            self.active_individuals.append(candidate)
+            self.baseline_version += 1
+            candidate.metadata["promoted_baseline_version"] = self.baseline_version
+            promoted += 1
+            logger.info(
+                "Promoted active candidate %s at generation %d: min_gain=%.6f mean_gain=%.6f",
+                candidate.get_phenotype(),
+                generation,
+                min(gains),
+                float(np.mean(gains)),
+            )
+
+        if promoted:
+            self.promotion_events.append(
+                {
+                    "generation": generation,
+                    "phase": phase,
+                    "baseline_version": self.baseline_version,
+                    "active_size": len(self.active_individuals),
+                    "promoted_count": promoted,
+                    "promotion_interval": self.promotion_interval,
+                }
+            )
+        return promoted > 0
+
+    def _refresh_history(self, evaluator: Evaluator, problem: Problem) -> None:
+        """Refresh a bounded proxy shortlist before the exact promotion scan."""
+
+        ranked = self._history_in_proxy_order()
+        ranked = ranked[: min(self.promotion_refresh_top_n, len(ranked))]
+        if ranked:
+            list(evaluator.evaluate(problem, [self.history[index] for index in ranked]))
+
+    def _history_in_proxy_order(self) -> list[int]:
+        return sorted(
+            range(len(self.history)),
+            key=lambda index: min(
+                self._admission_objectives_for(index)[:ARCHIVE_PROXY_OBJECTIVES]
+            ),
+            reverse=True,
+        )
+
+    def _admission_objectives_for(self, index: int) -> tuple[float, ...]:
+        individual = self.history[index]
+        key = self._expression_key(individual)
+        if key in self.admission_objectives:
+            return self.admission_objectives[key]
+        if self._problem is None:
+            return (0.0, 0.0, 0.0, 0.0)
+        return tuple(
+            float(value) for value in individual.get_fitness(self._problem).fitness_components
+        )
+
+    def _history_signal_for(self, index: int) -> np.ndarray | None:
+        if index < len(self._history_signals):
+            return self._history_signals[index]
+        signal, _reason = self._signal_for(self.history[index])
+        return signal
+
+    def _active_signals(self) -> list[np.ndarray]:
+        signals: list[np.ndarray] = []
+        for individual in self.active_individuals:
+            key = self._expression_key(individual)
+            signal = None
+            for index, history_individual in enumerate(self.history):
+                if self._expression_key(history_individual) == key:
+                    signal = self._history_signal_for(index)
+                    break
+            if signal is None:
+                signal, _reason = self._signal_for(individual)
+            if signal is not None:
+                signals.append(signal)
+        return signals
+
+    def _select_promotion_winner(
+        self,
+        problem: Problem,
+        generation: int,
+        evaluator: Evaluator | None,
+        *,
+        phase: str,
+    ) -> tuple[PhenotypicIndividual, tuple[float, ...], int] | None:
+        active_keys = self.active_keys
+        active_signals = self._active_signals()
+        best: tuple[tuple[float, float, float], int, PhenotypicIndividual, tuple[float, ...]] | None = None
+
+        for proxy_rank, index in enumerate(self._history_in_proxy_order(), start=1):
+            candidate = self.history[index]
+            key = self._expression_key(candidate)
+            if key in active_keys:
+                continue
+            signal = self._history_signal_for(index)
+            if signal is None:
+                self._record_promotion_check(
+                    candidate, generation, phase, proxy_rank, (), "rejected", "signal_invalid"
+                )
+                continue
+            correlation = correlation_rejection(
+                signal,
+                active_signals,
+                self.active_correlation_threshold,
+            )
+            if correlation["rejected"]:
+                self._record_promotion_check(
+                    candidate,
+                    generation,
+                    phase,
+                    proxy_rank,
+                    (),
+                    "rejected",
+                    "active_correlation",
+                    correlation=correlation.get("abs_corr"),
+                )
+                continue
+
+            if evaluator is not None:
+                evaluated = list(evaluator.evaluate(problem, [candidate]))
+                if not evaluated:
+                    continue
+                candidate = evaluated[0]
+            try:
+                fitness = candidate.get_fitness(problem)
+                values = tuple(float(value) for value in fitness.fitness_components)
+                gains = values[:ARCHIVE_PROXY_OBJECTIVES]
+                cost = values[ARCHIVE_PROXY_OBJECTIVES]
+                valid = (
+                    fitness.valid
+                    and len(values) == OBJECTIVES_PER_ARCHIVE
+                    and all(math.isfinite(value) for value in values)
+                )
+            except (AttributeError, TypeError, ValueError, IndexError):
+                gains = ()
+                cost = float("inf")
+                valid = False
+
+            check_index = self._record_promotion_check(
+                candidate,
+                generation,
+                phase,
+                proxy_rank,
+                gains,
+                "checked" if valid else "rejected",
+                "" if valid else "invalid_fitness",
+            )
+            if not valid:
+                continue
+            minimum = min(gains)
+            mean = float(np.mean(gains))
+            if minimum < self.promotion_min_gain or mean < self.promotion_mean_gain:
+                self.promotion_checks[check_index]["outcome"] = "rejected"
+                self.promotion_checks[check_index]["reason"] = "promotion_threshold"
+                continue
+            rank = (minimum, mean, -cost)
+            if best is None or rank > best[0]:
+                if best is not None:
+                    self.promotion_checks[best[1]]["outcome"] = "not_selected"
+                    self.promotion_checks[best[1]]["reason"] = "not_best_exact"
+                best = (rank, check_index, candidate, gains)
+            else:
+                self.promotion_checks[check_index]["outcome"] = "not_selected"
+                self.promotion_checks[check_index]["reason"] = "not_best_exact"
+        if best is None:
+            return None
+        return best[2], best[3], best[1]
+
+    def _record_promotion_check(
+        self,
+        individual: PhenotypicIndividual,
+        generation: int,
+        phase: str,
+        proxy_rank: int,
+        gains: Sequence[float],
+        outcome: str,
+        reason: str,
+        *,
+        correlation: object = None,
+    ) -> int:
+        admission = self.admission_objectives.get(self._expression_key(individual), ())
+        record: dict[str, object] = {
+            "generation": generation,
+            "phase": phase,
+            "baseline_version": self.baseline_version,
+            "expression": str(individual.get_phenotype()),
+            "proxy_rank": proxy_rank,
+            "proxy_gains": [float(value) for value in admission[:ARCHIVE_PROXY_OBJECTIVES]],
+            "current_gains": [float(value) for value in gains],
+            "minimum_gain_threshold": self.promotion_min_gain,
+            "mean_gain_threshold": self.promotion_mean_gain,
+            "active_correlation_threshold": self.active_correlation_threshold,
+            "outcome": outcome,
+            "reason": reason,
+        }
+        if correlation is not None:
+            value = float(correlation)
+            record["abs_corr"] = value if math.isfinite(value) else None
+        self.promotion_checks.append(record)
+        return len(self.promotion_checks) - 1
 
     def iterate(
         self,
@@ -847,6 +1167,9 @@ class FilteredArchiveStep(ArchiveStep):
                 )
                 continue
             seen.add(key)
+            individual.metadata.setdefault(
+                "evaluated_baseline_version", self.baseline_version
+            )
             valid.append(individual)
         return valid
 
@@ -1076,8 +1399,15 @@ FilteredHistoryArchive = FilteredArchiveStep
 
 __all__ = [
     "ARCHIVE_PROXY_OBJECTIVES",
+    "DEFAULT_ACTIVE_CORRELATION_THRESHOLD",
     "DEFAULT_ARCHIVE_CORRELATION_THRESHOLD",
     "DEFAULT_ARCHIVE_QUALITY_THRESHOLD",
+    "DEFAULT_FIRST_PROMOTION_TOP_K",
+    "DEFAULT_PROMOTION_ADD_K",
+    "DEFAULT_PROMOTION_INTERVAL",
+    "DEFAULT_PROMOTION_MEAN_GAIN",
+    "DEFAULT_PROMOTION_MIN_GAIN",
+    "DEFAULT_PROMOTION_REFRESH_TOP_N",
     "FORMAT_IDENTIFIER",
     "FORMAT_VERSION",
     "OBJECTIVES_PER_ARCHIVE",

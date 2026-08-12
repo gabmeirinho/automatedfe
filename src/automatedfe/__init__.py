@@ -9,8 +9,15 @@ from .encoding import (
 )
 from .features.archive import (
     ARCHIVE_PROXY_OBJECTIVES,
+    DEFAULT_ACTIVE_CORRELATION_THRESHOLD,
     DEFAULT_ARCHIVE_CORRELATION_THRESHOLD,
     DEFAULT_ARCHIVE_QUALITY_THRESHOLD,
+    DEFAULT_FIRST_PROMOTION_TOP_K,
+    DEFAULT_PROMOTION_ADD_K,
+    DEFAULT_PROMOTION_INTERVAL,
+    DEFAULT_PROMOTION_MEAN_GAIN,
+    DEFAULT_PROMOTION_MIN_GAIN,
+    DEFAULT_PROMOTION_REFRESH_TOP_N,
     ArchiveSnapshot,
     ArchiveStep,
     FilteredArchiveStep,
@@ -38,6 +45,8 @@ from .features.runner import (
     write_summary_json,
 )
 from .fitness import (
+    ActiveResidualEvaluator,
+    ActiveResidualFitness,
     FitnessEvaluator,
     NumericalFitnessError,
     RandomForestFitness,
@@ -68,9 +77,16 @@ from .validation import first_sorting_violation
 
 __all__ = [
     "ARCHIVE_PROXY_OBJECTIVES",
+    "DEFAULT_ACTIVE_CORRELATION_THRESHOLD",
     "CATEGORICAL_COLUMNS",
     "DEFAULT_ARCHIVE_CORRELATION_THRESHOLD",
     "DEFAULT_ARCHIVE_QUALITY_THRESHOLD",
+    "DEFAULT_FIRST_PROMOTION_TOP_K",
+    "DEFAULT_PROMOTION_ADD_K",
+    "DEFAULT_PROMOTION_INTERVAL",
+    "DEFAULT_PROMOTION_MEAN_GAIN",
+    "DEFAULT_PROMOTION_MIN_GAIN",
+    "DEFAULT_PROMOTION_REFRESH_TOP_N",
     "DEFAULT_CARD_TOKENS_INPUT",
     "DEFAULT_DATASET_INPUT",
     "DEFAULT_DATASET_OUTPUT",
@@ -84,6 +100,8 @@ __all__ = [
     "PROJECT_ROOT",
     "ArchiveSnapshot",
     "ArchiveStep",
+    "ActiveResidualEvaluator",
+    "ActiveResidualFitness",
     "FeatureMaterializer",
     "FilteredArchiveStep",
     "FilteredHistoryArchive",

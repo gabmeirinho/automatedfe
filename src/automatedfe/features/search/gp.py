@@ -62,6 +62,19 @@ def build_search_algorithm(
     score_metric: str = "brier_improvement",
     fitness_random_state: int = 42,
     max_depth: int | None = None,
+    use_active_set: bool = False,
+    promotion_interval: int = 5,
+    first_promotion_top_k: int = 2,
+    promotion_add_k: int = 1,
+    promotion_refresh_top_n: int = 50,
+    archive_quality_threshold: float = 0.001,
+    archive_correlation_threshold: float = 0.85,
+    active_correlation_threshold: float = 0.90,
+    promotion_min_gain: float = 0.0,
+    promotion_mean_gain: float = 0.0005,
+    promotion_corr_threshold_active: float | None = None,
+    promotion_min_delta_threshold: float | None = None,
+    promotion_min_mean_delta_threshold: float | None = None,
 ) -> GeneticProgramming:
     """Build the genetic-programming search strategy."""
 
@@ -78,12 +91,31 @@ def build_search_algorithm(
         seed=seed,
         max_depth=max_depth,
         archive_path=archive_path,
+        use_filtered_archive=True,
+        use_active_set=use_active_set,
+        promotion_interval=promotion_interval,
+        first_promotion_top_k=first_promotion_top_k,
+        promotion_add_k=promotion_add_k,
+        promotion_refresh_top_n=promotion_refresh_top_n,
+        archive_quality_threshold=archive_quality_threshold,
+        archive_correlation_threshold=archive_correlation_threshold,
+        active_correlation_threshold=active_correlation_threshold,
+        promotion_min_gain=promotion_min_gain,
+        promotion_mean_gain=promotion_mean_gain,
+        promotion_corr_threshold_active=promotion_corr_threshold_active,
+        promotion_min_delta_threshold=promotion_min_delta_threshold,
+        promotion_min_mean_delta_threshold=promotion_min_mean_delta_threshold,
     )
     generation_step = _multiobjective_programming_step(components.archive_step)
     recorder = _csv_recorder(csv_path, components.problem)
     tracker = ArchiveProgressTracker(
         components.problem,
         components.archive_step,
+        baseline_version_provider=(
+            (lambda: components.archive_step.baseline_version)
+            if hasattr(components.archive_step, "baseline_version")
+            else None
+        ),
         recorders=[] if recorder is None else [recorder],
     )
 

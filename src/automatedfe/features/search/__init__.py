@@ -1,6 +1,13 @@
 """Feature-search strategies and their shared evaluated-search lifecycle."""
 
 from ..archive import (
+    DEFAULT_ACTIVE_CORRELATION_THRESHOLD,
+    DEFAULT_FIRST_PROMOTION_TOP_K,
+    DEFAULT_PROMOTION_ADD_K,
+    DEFAULT_PROMOTION_INTERVAL,
+    DEFAULT_PROMOTION_MEAN_GAIN,
+    DEFAULT_PROMOTION_MIN_GAIN,
+    DEFAULT_PROMOTION_REFRESH_TOP_N,
     FilteredArchiveStep,
     FilteredHistoryArchive,
     GPArchiveStep,
@@ -37,7 +44,14 @@ from .unbound_enumerative_search import (
 
 __all__ = [
     "ARCHIVE_MINIMIZE",
+    "DEFAULT_ACTIVE_CORRELATION_THRESHOLD",
+    "DEFAULT_FIRST_PROMOTION_TOP_K",
     "DEFAULT_MAX_DEPTH",
+    "DEFAULT_PROMOTION_ADD_K",
+    "DEFAULT_PROMOTION_INTERVAL",
+    "DEFAULT_PROMOTION_MEAN_GAIN",
+    "DEFAULT_PROMOTION_MIN_GAIN",
+    "DEFAULT_PROMOTION_REFRESH_TOP_N",
     "ArchiveProgressTracker",
     "BoundedExpressionEnumerator",
     "BoundedGrammarEnumerator",
