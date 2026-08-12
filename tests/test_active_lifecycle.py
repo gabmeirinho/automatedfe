@@ -107,10 +107,14 @@ def test_promotion_boundary_is_called_once_before_generation_evaluation():
 
         def __init__(self):
             self.calls = []
+            self.refreshes = []
 
         def maybe_promote(self, problem, generation, *, evaluator):
             self.calls.append((problem, generation, evaluator))
             return generation == 5
+
+        def reevaluate_archive(self, problem, evaluator):
+            self.refreshes.append((problem, evaluator))
 
     class RecordingFitness:
         def __init__(self):
@@ -134,3 +138,39 @@ def test_promotion_boundary_is_called_once_before_generation_evaluation():
     assert [call[1] for call in archive.calls] == [4, 5]
     assert archive.calls[1][2] is search.tracker.evaluator
     assert fitness.invalidations == 1
+    assert archive.refreshes == [(search.problem, search.tracker.evaluator)]
+
+
+def test_archive_is_reevaluated_and_rebuilt_after_baseline_change():
+    version = {"value": 0}
+    scores = {
+        0: {
+            "a": [0.9, 0.1, 0.1, 1.0],
+            "b": [0.1, 0.9, 0.1, 1.0],
+        },
+        1: {
+            "a": [0.1, 0.1, 0.1, 1.0],
+            "b": [0.2, 0.2, 0.2, 1.0],
+        },
+    }
+    problem = MultiObjectiveProblem(
+        lambda expression: scores[version["value"]][expression.name],
+        minimize=[False, False, False, True],
+    )
+    archive = FilteredArchiveStep()
+    individuals = [ConcreteIndividual(Expression(name)) for name in ("a", "b")]
+    for individual in individuals:
+        individual.set_fitness(
+            problem,
+            Fitness(scores[0][individual.get_phenotype().name], valid=True),
+        )
+        individual.metadata["evaluated_baseline_version"] = 0
+    archive.archive = individuals
+
+    version["value"] = 1
+    evaluator = CandidateEvaluator(lambda: version["value"])
+    archive.reevaluate_archive(problem, evaluator)
+
+    assert evaluator.number_of_evaluations() == 2
+    assert [item.get_phenotype().name for item in archive.archive] == ["b"]
+    assert archive.archive[0].get_fitness(problem).fitness_components == scores[1]["b"]

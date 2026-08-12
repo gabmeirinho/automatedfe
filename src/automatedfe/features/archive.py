@@ -532,6 +532,27 @@ class ArchiveStep(GeneticStep):
             self.save(self.archive_path)
         yield from evaluated
 
+    def reevaluate_archive(
+        self,
+        problem: Problem,
+        evaluator: Evaluator,
+    ) -> None:
+        """Re-score the complete archive and rebuild its Pareto front.
+
+        This is required when the fitness baseline changes: objective values
+        calculated against different baselines must never share a Pareto
+        comparison. Fitness is explicitly removed so the refresh does not
+        depend on evaluator-specific cache invalidation.
+        """
+
+        self._validate_problem(problem)
+        self._problem = problem
+        for individual in self.archive:
+            individual.fitness_store.pop(problem, None)
+        evaluated = list(evaluator.evaluate(problem, iter(self.archive)))
+        valid = self._valid_unique(evaluated, problem)
+        self.archive = list(non_dominated(iter(valid), problem))
+
     def save(
         self,
         path: str | PathLike[str] | None = None,

@@ -447,7 +447,11 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
         for individual in individuals:
             individual.fitness_store.pop(self.problem, None)
 
-    def _promote_at_boundary(self, generation: int) -> bool:
+    def _promote_at_boundary(
+        self,
+        generation: int,
+        stale_individuals: Iterable[PhenotypicIndividual] = (),
+    ) -> bool:
         """Run one idempotent active promotion boundary."""
 
         if generation in self._promotion_boundaries:
@@ -468,8 +472,17 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
             )
         else:
             changed = maybe_promote(self.problem, generation)
-        if changed and hasattr(self.fitness_evaluator, "invalidate_baseline_cache"):
-            self.fitness_evaluator.invalidate_baseline_cache()
+        if changed:
+            if hasattr(self.fitness_evaluator, "invalidate_baseline_cache"):
+                self.fitness_evaluator.invalidate_baseline_cache()
+            # Population and archive entries can share individual objects.
+            # Clear stale population fitness first, then leave every archived
+            # object carrying its freshly calculated baseline-version score.
+            self._invalidate_population_fitness(stale_individuals)
+            self.archive_step.reevaluate_archive(
+                self.problem,
+                self.tracker.evaluator,
+            )
         return bool(changed)
 
     def _generate_candidates(
@@ -506,11 +519,11 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
         current_individuals: list[PhenotypicIndividual] = []
 
         while generation == 0 or not self.is_done():
-            if generation > 0 and self._promote_at_boundary(generation):
-                # Reproduction can carry elite individuals into the next
-                # generation.  They must not retain scores from the previous
-                # active baseline while the generation is being prepared.
-                self._invalidate_population_fitness(current_individuals)
+            if generation > 0:
+                self._promote_at_boundary(
+                    generation,
+                    stale_individuals=current_individuals,
+                )
             generated = (
                 self._generate_initial_individuals()
                 if generation == 0
@@ -567,8 +580,10 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
     ) -> None:
         """Prepare generated individuals before their evaluation."""
 
-        if self._promote_at_boundary(generation):
-            self._invalidate_population_fitness(individuals)
+        self._promote_at_boundary(
+            generation,
+            stale_individuals=individuals,
+        )
         self.last_individuals = list(individuals)
         phenotypes = [individual.get_phenotype() for individual in individuals]
         logger.info(
