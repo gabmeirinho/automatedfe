@@ -101,6 +101,32 @@ def test_cli_defaults_to_residual_brier_improvement(tmp_path, monkeypatch):
     assert calls[0][1]["score_metric"] == "brier_improvement"
 
 
+def test_cli_forwards_active_set_for_genetic_search(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(strategy, **kwargs):
+        calls.append((strategy, kwargs))
+        return fake_result(strategy)
+
+    monkeypatch.setattr(search_cli, "run_feature_search", fake_run)
+
+    assert search_cli.main(
+        [
+            "--strategy",
+            "genetic",
+            "--time-budget",
+            "1",
+            "--use-active-set",
+            "--dataset",
+            str(tmp_path / "dataset.parquet"),
+            "--mapping",
+            str(tmp_path / "mapping.json"),
+        ]
+    ) == 0
+
+    assert calls[0][1]["use_active_set"] is True
+
+
 @pytest.mark.parametrize(
     "arguments",
     [

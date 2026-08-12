@@ -278,7 +278,7 @@ def write_summary_json(
 
 @dataclass(frozen=True, slots=True)
 class SearchRunResult:
-    """Search diagnostics, selected expressions, and held-out evaluation."""
+    """Search diagnostics, selected expressions, and held-out evaluations."""
 
     strategy: SearchStrategy
     expressions: tuple[expr, ...]
@@ -291,6 +291,9 @@ class SearchRunResult:
     duplicate_count: int
     objectives: tuple[tuple[float, ...], ...] | None
     grammar_exhausted: bool
+    active_set_expressions: tuple[expr, ...] = ()
+    active_set_final_evaluation: FinalEvaluationResult | None = None
+    active_set_final_evaluation_duration_seconds: float | None = None
 
     @property
     def final_metrics(self) -> dict[str, float]:
@@ -327,6 +330,20 @@ class SearchRunResult:
         """Return the selected archive or generated expression sequence."""
 
         return self.expressions
+
+    @property
+    def archive_final_evaluation(self) -> FinalEvaluationResult:
+        """Return the primary held-out evaluation of the archive features."""
+
+        return self.final_evaluation
+
+    @property
+    def active_set_final_metrics(self) -> dict[str, float] | None:
+        """Return held-out metrics for promoted active features, when present."""
+
+        if self.active_set_final_evaluation is None:
+            return None
+        return self.active_set_final_evaluation.metrics
 
     @property
     def evaluation_count(self) -> int:
@@ -547,6 +564,7 @@ def run_feature_search(
     seed: int = 42,
     population_size: int = 50,
     max_depth: int | None = None,
+    use_active_set: bool = False,
     csv_path: str | PathLike[str] | None = None,
     archive_path: str | PathLike[str] | None = None,
     force: bool = False,
@@ -559,11 +577,16 @@ def run_feature_search(
     or fitness evaluation. Search setup is completed before the search timer
     starts; held-out evaluation is timed separately. ``csv_path`` records the
     common incremental diagnostics, while ``archive_path`` saves an evaluated
-    strategy's final Pareto archive once. Existing outputs require
-    ``force=True``.
+    strategy's final Pareto archive once. In genetic active-set mode, the
+    Pareto archive and promoted active set are fitted and scored separately on
+    the held-out split. Existing outputs require ``force=True``.
     """
 
     selected_strategy = _coerce_strategy(strategy)
+    if not isinstance(use_active_set, bool):
+        raise ValueError("use_active_set must be a boolean")
+    if use_active_set and selected_strategy is not SearchStrategy.GENETIC:
+        raise ValueError("use_active_set is supported only by the genetic strategy")
     validated_time_budget, validated_candidate_count = _validate_budget_contract(
         selected_strategy,
         time_budget_seconds=time_budget_seconds,
@@ -594,6 +617,7 @@ def run_feature_search(
             score_metric=score_metric,
             fitness_random_state=fitness_random_state,
             max_depth=max_depth,
+            use_active_set=use_active_set,
         )
         materializer = search.materializer
     elif selected_strategy is SearchStrategy.ENUMERATIVE:
@@ -656,7 +680,21 @@ def run_feature_search(
         raise
     search_duration_seconds = (monotonic_ns() - search_started_ns) * 1e-9
 
-    if selected_strategy in _EVALUATED_STRATEGIES:
+    active_set_expressions: tuple[expr, ...] = ()
+    active_mode = bool(
+        selected_strategy is SearchStrategy.GENETIC
+        and getattr(getattr(search, "archive_step", None), "use_active_set", False)
+    )
+    if active_mode:
+        expressions, objectives = _archive_expressions_and_objectives(
+            search,
+            getattr(search.archive_step, "archive", ()),
+        )
+        active_set_expressions = tuple(
+            _as_expression(individual)
+            for individual in getattr(search.archive_step, "active_individuals", ())
+        )
+    elif selected_strategy in _EVALUATED_STRATEGIES:
         expressions, objectives = _archive_expressions_and_objectives(
             search, search_output
         )
@@ -693,6 +731,15 @@ def run_feature_search(
     final_evaluation = final_evaluator.evaluate(expressions)
     final_evaluation_duration_seconds = (monotonic_ns() - final_started_ns) * 1e-9
 
+    active_set_final_evaluation: FinalEvaluationResult | None = None
+    active_set_final_evaluation_duration_seconds: float | None = None
+    if active_mode and active_set_expressions:
+        active_started_ns = monotonic_ns()
+        active_set_final_evaluation = final_evaluator.evaluate(active_set_expressions)
+        active_set_final_evaluation_duration_seconds = (
+            monotonic_ns() - active_started_ns
+        ) * 1e-9
+
     return SearchRunResult(
         strategy=selected_strategy,
         expressions=expressions,
@@ -705,6 +752,11 @@ def run_feature_search(
         duplicate_count=duplicate_count,
         objectives=objectives,
         grammar_exhausted=grammar_exhausted,
+        active_set_expressions=active_set_expressions,
+        active_set_final_evaluation=active_set_final_evaluation,
+        active_set_final_evaluation_duration_seconds=(
+            active_set_final_evaluation_duration_seconds
+        ),
     )
 
 

@@ -132,6 +132,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Maximum grammar tree depth (default: {DEFAULT_MAX_DEPTH})",
     )
     parser.add_argument(
+        "--use-active-set",
+        action="store_true",
+        help=(
+            "Enable active-set promotion for genetic search and run separate "
+            "archive and active-set final evaluations"
+        ),
+    )
+    parser.add_argument(
         "--csv",
         "--csv-path",
         "--diagnostics-csv",
@@ -168,6 +176,8 @@ def _validate_strategy_options(
     args: argparse.Namespace,
 ) -> SearchStrategy:
     strategy = SearchStrategy(args.strategy)
+    if args.use_active_set and strategy is not SearchStrategy.GENETIC:
+        parser.error("--use-active-set is supported only by strategy 'genetic'")
     evaluated = strategy in _EVALUATED_STRATEGIES
     if evaluated:
         if args.time_budget is None:
@@ -247,6 +257,7 @@ def _summary_document(
             "seed": args.seed,
             "population_size": args.population_size,
             "max_depth": args.max_depth,
+            "use_active_set": args.use_active_set,
         },
         "counts": {
             "generated": result.generated_count,
@@ -262,6 +273,13 @@ def _summary_document(
         "selected_feature_count": len(result.expressions),
         "final_metrics": dict(result.final_metrics),
     }
+    active_set_metrics = getattr(result, "active_set_final_metrics", None)
+    if active_set_metrics is not None:
+        document["active_set_feature_count"] = len(result.active_set_expressions)
+        document["active_set_final_metrics"] = dict(active_set_metrics)
+        document["timings"]["active_set_final_evaluation_seconds"] = (
+            result.active_set_final_evaluation_duration_seconds
+        )
     if result.objectives is not None:
         document["objectives"] = [list(objectives) for objectives in result.objectives]
     return document
@@ -293,6 +311,14 @@ def _print_result(
             for name, value in sorted(result.final_metrics.items())
         )
         print(f"Final metrics: {metrics}")
+    active_set_metrics = getattr(result, "active_set_final_metrics", None)
+    if active_set_metrics is not None:
+        metrics = ", ".join(
+            f"{name}={value:.6f}"
+            for name, value in sorted(active_set_metrics.items())
+        )
+        print(f"Active-set features: {len(result.active_set_expressions)}")
+        print(f"Active-set final metrics: {metrics}")
     for label, path in (
         ("Diagnostics", args.csv_path),
         ("Archive", args.archive_path),
@@ -324,6 +350,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             seed=args.seed,
             population_size=args.population_size,
             max_depth=args.max_depth,
+            use_active_set=args.use_active_set,
             csv_path=args.csv_path,
             archive_path=args.archive_path,
             force=args.force,
