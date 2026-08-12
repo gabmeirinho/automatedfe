@@ -13,7 +13,7 @@ import duckdb
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.metrics import roc_auc_score
 
 from .archive import ArchiveSnapshot, ArchiveStep, load_archive
 from .feature_materialization import FeatureMaterializer
@@ -290,7 +290,6 @@ class FinalEvaluator:
         if np.unique(y_test).size < 2:
             raise ValueError("ROC AUC requires both target classes in the test split")
         metrics = {
-            "accuracy": float(accuracy_score(y_test, predictions)),
             "roc_auc": float(roc_auc_score(y_test, model.predict_proba(x_test)[:, 1])),
         }
         return FinalEvaluationResult(

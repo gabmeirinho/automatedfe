@@ -133,7 +133,7 @@ def test_final_evaluator_fits_train_and_scores_test(tmp_path):
         [0.0, 1.0] * 6 + [0.0, 1.0, 0.0, 1.0],
         equal_nan=True,
     )
-    assert result.metrics == {"accuracy": 1.0, "roc_auc": 1.0}
+    assert result.metrics == {"roc_auc": 1.0}
     assert result.predictions.tolist() == [0, 1, 0, 1]
     assert result.model.n_features_in_ == 1
 
@@ -152,7 +152,7 @@ def test_final_evaluator_builds_matrix_from_expressions_and_deduplicates(tmp_pat
     result = evaluator.evaluate(individuals)
 
     assert result.model.n_features_in_ == 2
-    assert result.metrics["accuracy"] >= 0.0
+    assert result.metrics["roc_auc"] >= 0.0
 
 
 def test_final_evaluator_rejects_empty_feature_set(tmp_path):

@@ -264,8 +264,8 @@ class RandomForestFitness(ChronologicalFoldEvaluator):
         random_state: int = DEFAULT_RANDOM_STATE,
         n_estimators: int = DEFAULT_N_ESTIMATORS,
     ) -> None:
-        if score_metric not in {"accuracy", "roc_auc"}:
-            raise ValueError("score_metric must be 'accuracy' or 'roc_auc'")
+        if score_metric != "roc_auc":
+            raise ValueError("score_metric must be 'roc_auc'")
 
         super().__init__(
             materializer,
@@ -305,16 +305,13 @@ class RandomForestFitness(ChronologicalFoldEvaluator):
             model.fit(x_train, y_train)
             self.last_models.append(model)
 
-            if self.score_metric == "accuracy":
-                score = float(model.score(x_validation, y_validation))
-            else:
-                if np.unique(y_validation).size < 2:
-                    raise ValueError(
-                        "ROC AUC requires both target classes in every validation fold"
-                    )
-                score = float(
-                    roc_auc_score(y_validation, model.predict_proba(x_validation)[:, 1])
+            if np.unique(y_validation).size < 2:
+                raise ValueError(
+                    "ROC AUC requires both target classes in every validation fold"
                 )
+            score = float(
+                roc_auc_score(y_validation, model.predict_proba(x_validation)[:, 1])
+            )
             self.fold_scores.append(score)
             logger.info(
                 "Split %d/%d %s score=%.4f",

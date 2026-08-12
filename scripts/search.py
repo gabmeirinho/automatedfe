@@ -100,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--score-metric",
-        choices=("accuracy", "roc_auc", "brier", "brier_improvement"),
+        choices=("roc_auc", "brier", "brier_improvement"),
         default="brier_improvement",
         help="Cross-validation score metric (default: brier_improvement)",
     )

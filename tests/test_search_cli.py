@@ -19,7 +19,7 @@ def fake_result(strategy=SearchStrategy.ENUMERATIVE_WITHOUT_ARCHIVE):
         final_evaluation_duration_seconds=0.5,
         grammar_exhausted=False,
         objectives=None,
-        final_metrics={"accuracy": 0.75, "roc_auc": 0.8},
+        final_metrics={"roc_auc": 0.8},
     )
 
 
@@ -65,7 +65,7 @@ def test_cli_dispatches_evaluation_free_strategy_and_writes_summary(
         "duplicates": 0,
     }
     assert summary["selected_feature_count"] == 2
-    assert summary["final_metrics"] == {"accuracy": 0.75, "roc_auc": 0.8}
+    assert summary["final_metrics"] == {"roc_auc": 0.8}
     assert "objectives" not in summary
     assert "predictions" not in summary
     assert "model" not in summary
