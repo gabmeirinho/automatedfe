@@ -3,6 +3,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import pytest
 from geneticengine.evaluation.sequential import SequentialEvaluator
 from geneticengine.problems import Fitness, MultiObjectiveProblem
@@ -30,9 +31,11 @@ from automatedfe.features import (
     build_grammar,
 )
 from automatedfe.features.archive import (
+    ActiveSetManager,
     ArchiveStep,
     decode_expression,
     encode_expression,
+    load_active_set_snapshot,
     load_archive,
 )
 
@@ -592,3 +595,159 @@ def test_load_archive_validates_mapping_compatibility(tmp_path):
         load_archive(archive_path, mapping=incompatible_mapping)
     snapshot = load_archive(archive_path, mapping=LABEL_MAPPING)
     assert len(snapshot) == 1
+
+
+def make_active_manager(scores, signals, *, mapping=LABEL_MAPPING, **kwargs):
+    defaults = {
+        "promotion_refresh_top_n": 0,
+        "first_promotion_top_k": 2,
+        "promotion_add_k": 1,
+        "promotion_min_gain": 0.0,
+        "promotion_mean_gain": 0.0,
+        "active_correlation_threshold": 0.99,
+    }
+    defaults.update(kwargs)
+    manager = ActiveSetManager(
+        mapping=mapping,
+        signal_provider=lambda expression: signals[str(expression)],
+        use_active_set=True,
+        **defaults,
+    )
+    return manager
+
+
+def test_active_manager_history_round_trips_with_immutable_admission_objectives(
+    tmp_path,
+):
+    expressions = [Add(MeanAmount(0), CountTotal(0)), Mul(MaxAmount(1), CountTotal(1))]
+    scores = {
+        str(expressions[0]): (0.8, 0.8, 0.8, 1.0),
+        str(expressions[1]): (0.9, 0.7, 0.9, 1.5),
+    }
+    signals = {
+        str(expressions[0]): np.array([0.0, 1.0, 0.0, 1.0]),
+        str(expressions[1]): np.array([0.0, 0.0, 1.0, 1.0]),
+    }
+    problem = make_grammar_problem(scores)
+    manager = make_active_manager(scores, signals)
+    individuals = grammar_evaluated_individuals(problem, expressions)
+    manager.process_evaluated_population(problem, individuals, generation=0)
+    individuals[0].set_fitness(problem, Fitness([0.1, 0.1, 0.1, 9.0], valid=True))
+
+    history_path = tmp_path / "history.json"
+    manager.save_history(history_path)
+
+    snapshot = load_archive(history_path)
+    assert [str(expression) for expression in snapshot.expressions] == [
+        str(expression) for expression in expressions
+    ]
+    assert snapshot.objectives == (
+        (0.8, 0.8, 0.8, 1.0),
+        (0.9, 0.7, 0.9, 1.5),
+    )
+    assert snapshot.mapping == LABEL_MAPPING
+    assert snapshot.minimize == (False, False, False, True)
+
+
+def test_active_manager_snapshot_round_trip_records_promotion_metadata(tmp_path):
+    expressions = [Add(MeanAmount(0), CountTotal(0)), Mul(MaxAmount(1), CountTotal(1))]
+    scores = {
+        str(expressions[0]): (0.8, 0.8, 0.8, 1.0),
+        str(expressions[1]): (0.9, 0.9, 0.9, 2.0),
+    }
+    signals = {
+        str(expressions[0]): np.array([0.0, 1.0, 0.0, 1.0]),
+        str(expressions[1]): np.array([0.0, 0.0, 1.0, 1.0]),
+    }
+    problem = make_grammar_problem(scores)
+    manager = make_active_manager(scores, signals, first_promotion_top_k=1)
+    manager.process_evaluated_population(
+        problem,
+        grammar_evaluated_individuals(problem, expressions),
+        generation=0,
+    )
+
+    class ScoringEvaluator:
+        def evaluate(self, evaluation_problem, candidates):
+            for candidate in candidates:
+                candidate.set_fitness(
+                    evaluation_problem,
+                    Fitness(scores[str(candidate.get_phenotype())], valid=True),
+                )
+                yield candidate
+
+    assert manager.maybe_promote(problem, 5, evaluator=ScoringEvaluator())
+    promoted = manager.active_individuals[0].get_phenotype()
+
+    active_path = tmp_path / "active.json"
+    manager.save_active_snapshot(active_path)
+
+    snapshot = load_active_set_snapshot(active_path)
+    assert len(snapshot) == 1
+    assert snapshot.baseline_version == 1
+    assert [str(expression) for expression in snapshot.expressions] == [str(promoted)]
+    assert snapshot.gains == ((0.9, 0.9, 0.9),)
+    assert snapshot.promotion_generations == (5,)
+    assert snapshot.promoted_baseline_versions == (1,)
+    assert snapshot.promotion_events
+    assert snapshot.promotion_checks
+    assert snapshot.mapping == LABEL_MAPPING
+    assert snapshot.minimize == (False, False, False, True)
+
+
+def test_active_manager_saves_empty_snapshot_with_promotion_state(tmp_path):
+    expression = Add(MeanAmount(0), CountTotal(0))
+    scores = {str(expression): (0.8, 0.8, 0.8, 1.0)}
+    signals = {str(expression): np.array([0.0, 1.0, 0.0, 1.0])}
+    problem = make_grammar_problem(scores)
+    manager = make_active_manager(scores, signals)
+    manager.process_evaluated_population(
+        problem,
+        grammar_evaluated_individuals(problem, [expression]),
+        generation=0,
+    )
+
+    active_path = tmp_path / "active.json"
+    manager.save_active_snapshot(active_path)
+
+    snapshot = load_active_set_snapshot(active_path)
+    assert len(snapshot) == 0
+    assert snapshot.baseline_version == 0
+    assert snapshot.promotion_events == ()
+    assert snapshot.mapping == LABEL_MAPPING
+
+
+def test_load_active_set_snapshot_validates_mapping_compatibility(tmp_path):
+    expression = Add(MeanAmount(0), CountTotal(0))
+    scores = {str(expression): (0.8, 0.8, 0.8, 1.0)}
+    signals = {str(expression): np.array([0.0, 1.0, 0.0, 1.0])}
+    problem = make_grammar_problem(scores)
+    manager = make_active_manager(scores, signals)
+    manager.process_evaluated_population(
+        problem,
+        grammar_evaluated_individuals(problem, [expression]),
+        generation=0,
+    )
+    active_path = tmp_path / "active.json"
+    manager.save_active_snapshot(active_path)
+
+    incompatible_mapping = {
+        "status": {"approved": 0, "complete": 1, "denied": 2, "others": 3, "extra": 4},
+        "capture_method": {"contactless": 0, "emv": 1, "pix": 2},
+        "payment_method": {"debit": 0, "credit": 1, "null": -1},
+        "card_brand": {"mastercard": 0, "visa": 1, "null": -1},
+        "document_type": {"cnpj": 0, "cpf": 1, "null": -1},
+    }
+    with pytest.raises(ValueError, match="incompatible"):
+        load_active_set_snapshot(active_path, mapping=incompatible_mapping)
+    snapshot = load_active_set_snapshot(active_path, mapping=LABEL_MAPPING)
+    assert len(snapshot) == 0
+
+
+def test_save_history_and_active_snapshot_require_a_processed_population(tmp_path):
+    manager = ActiveSetManager(use_active_set=True)
+
+    with pytest.raises(ValueError, match="has not processed"):
+        manager.save_history(tmp_path / "history.json")
+    with pytest.raises(ValueError, match="has not processed"):
+        manager.save_active_snapshot(tmp_path / "active.json")

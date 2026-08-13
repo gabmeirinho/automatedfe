@@ -8,6 +8,8 @@ from .encoding import (
     load_label_mapping,
 )
 from .features.archive import (
+    ACTIVE_SET_FORMAT_IDENTIFIER,
+    ACTIVE_SET_FORMAT_VERSION,
     ARCHIVE_PROXY_OBJECTIVES,
     DEFAULT_ACTIVE_CORRELATION_THRESHOLD,
     DEFAULT_ARCHIVE_CORRELATION_THRESHOLD,
@@ -18,6 +20,7 @@ from .features.archive import (
     DEFAULT_PROMOTION_MEAN_GAIN,
     DEFAULT_PROMOTION_MIN_GAIN,
     DEFAULT_PROMOTION_REFRESH_TOP_N,
+    ActiveSetSnapshot,
     ArchiveSnapshot,
     ArchiveStep,
     ActiveSetManager,
@@ -25,6 +28,7 @@ from .features.archive import (
     absolute_pearson_correlation,
     correlation_rejection,
     is_correlated_pairwise,
+    load_active_set_snapshot,
     load_archive,
     validate_archive_quality_threshold,
     validate_correlation_threshold,
@@ -75,6 +79,8 @@ from .transaction_materialization import (
 from .validation import first_sorting_violation
 
 __all__ = [
+    "ACTIVE_SET_FORMAT_IDENTIFIER",
+    "ACTIVE_SET_FORMAT_VERSION",
     "ARCHIVE_PROXY_OBJECTIVES",
     "DEFAULT_ACTIVE_CORRELATION_THRESHOLD",
     "CATEGORICAL_COLUMNS",
@@ -100,6 +106,7 @@ __all__ = [
     "ArchiveSnapshot",
     "ArchiveStep",
     "ActiveSetManager",
+    "ActiveSetSnapshot",
     "ActiveResidualEvaluator",
     "ActiveResidualFitness",
     "FeatureMaterializer",
@@ -119,6 +126,7 @@ __all__ = [
     "first_sorting_violation",
     "fit_label_mapping",
     "is_correlated_pairwise",
+    "load_active_set_snapshot",
     "load_archive",
     "load_label_mapping",
     "load_mmapped_columns",
