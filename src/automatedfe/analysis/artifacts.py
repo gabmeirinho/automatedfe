@@ -51,7 +51,6 @@ MMAP_MANIFEST_RECORD_FILENAME: Final[str] = "inputs/mmap_manifest.json"
 
 FINGERPRINT_PREFIX: Final[str] = "sha256:"
 _FINGERPRINT_LENGTH: Final[int] = len(FINGERPRINT_PREFIX) + 64
-_CHUNK_SIZE: Final[int] = 1024 * 1024
 
 # Candidate-level and generation-level CSV schemas. The candidate schema is
 # the same table the runner has always written incrementally; loose CSV
@@ -109,16 +108,12 @@ def fingerprint_text(text: str) -> str:
 
 
 def fingerprint_file(path: str | PathLike[str]) -> str:
-    """Return the content fingerprint of a file, hashed in bounded chunks."""
+    """Return the content fingerprint of a file."""
 
     file_path = Path(path).resolve()
     if not file_path.is_file():
         raise FileNotFoundError(f"File does not exist: {file_path}")
-    digest = hashlib.sha256()
-    with open(file_path, "rb") as file:
-        while chunk := file.read(_CHUNK_SIZE):
-            digest.update(chunk)
-    return FINGERPRINT_PREFIX + digest.hexdigest()
+    return FINGERPRINT_PREFIX + hashlib.sha256(file_path.read_bytes()).hexdigest()
 
 
 def canonical_json_text(value: object) -> str:
