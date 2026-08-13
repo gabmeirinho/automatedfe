@@ -31,4 +31,4 @@ testpaths = ["tests"]
 packages = ["src/automatedfe"]
 
 [tool.uv.sources]
-geneticengine = { path = "/home/gabriel/Desktop/Thesis/GeneticEngine", editable = true }
+geneticengine = { path = "../GeneticEngine", editable = true }
