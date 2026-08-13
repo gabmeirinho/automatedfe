@@ -14,6 +14,7 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import roc_auc_score
+from sklearn.tree import DecisionTreeRegressor
 
 from .archive import ArchiveSnapshot, ArchiveStep, load_archive
 from .feature_materialization import FeatureMaterializer
@@ -22,7 +23,12 @@ from .fitness import (
     DATASET_TARGET_COLUMN,
     DATASET_TIMESTAMP_COLUMN,
     DEFAULT_RANDOM_STATE,
+    RESIDUAL_SHRINKAGE,
+    RESIDUAL_TREE_PARAMS,
     TRAIN_SPLIT,
+    logit,
+    logit_working_response,
+    sigmoid,
 )
 from .grammar import build_grammar
 from .search.search import canonical_expression_key
@@ -159,6 +165,53 @@ class FinalEvaluationResult:
     predictions: np.ndarray
 
 
+@dataclass(frozen=True, slots=True)
+class AdditiveEvaluationResult:
+    """Held-out metrics from the sequential active residual ensemble.
+
+    ``train_predictions`` and ``test_predictions`` are probabilities produced
+    by the additive model.  ``models`` contains the residual tree for each
+    non-constant active expression, in promotion order.  Constant expressions
+    do not need a tree and are therefore omitted from that tuple.
+    """
+
+    metrics: dict[str, float]
+    train_predictions: np.ndarray
+    test_predictions: np.ndarray
+    models: tuple[DecisionTreeRegressor, ...]
+    expressions: tuple[Any, ...]
+
+    @property
+    def predictions(self) -> np.ndarray:
+        """Return the test probabilities under the RF-compatible name."""
+
+        return self.test_predictions
+
+    @property
+    def train_auc(self) -> float:
+        """Return the additive ensemble's training ROC AUC."""
+
+        return self.metrics["train_auc"]
+
+    @property
+    def test_auc(self) -> float:
+        """Return the additive ensemble's held-out ROC AUC."""
+
+        return self.metrics["test_auc"]
+
+    @property
+    def train_roc_auc(self) -> float:
+        """Descriptive alias for :attr:`train_auc`."""
+
+        return self.train_auc
+
+    @property
+    def test_roc_auc(self) -> float:
+        """Descriptive alias for :attr:`test_auc`."""
+
+        return self.test_auc
+
+
 class FinalEvaluator:
     """Materialize a generated feature set and score it on the test split.
 
@@ -226,6 +279,15 @@ class FinalEvaluator:
         ]
         return np.column_stack(columns)
 
+    def _resolve_individuals(self, source: Any) -> list[Any]:
+        """Resolve and structurally deduplicate a final-evaluation input."""
+
+        if isinstance(source, (ArchiveStep, ArchiveSnapshot, str, PathLike)):
+            individuals = _resolve_archive(source, mapping=self.mapping)
+        else:
+            individuals = source
+        return _deduplicate_individuals(individuals)
+
     def evaluate(
         self,
         individuals: Sequence[Any] | ArchiveSource | None = None,
@@ -248,12 +310,7 @@ class FinalEvaluator:
         if source is None:
             raise ValueError("An expression sequence or archive is required")
 
-        if isinstance(source, (ArchiveStep, ArchiveSnapshot, str, PathLike)):
-            individuals = _resolve_archive(source, mapping=self.mapping)
-        else:
-            individuals = source
-
-        individuals = _deduplicate_individuals(individuals)
+        individuals = self._resolve_individuals(source)
         if not individuals:
             raise ValueError("At least one individual is required for final evaluation")
         matrix = self._feature_matrix(individuals)
@@ -298,6 +355,117 @@ class FinalEvaluator:
             predictions=predictions,
         )
 
+    def evaluate_active_set(
+        self,
+        individuals: Sequence[Any] | ArchiveSource | None = None,
+        *,
+        archive: ArchiveSource | None = None,
+    ) -> FinalEvaluationResult | None:
+        """Evaluate promoted expressions with the standard final RF.
+
+        Active expressions are already filtered during promotion. This method
+        deliberately performs no additional correlation filtering and treats
+        an empty active set as a valid, metric-less result. The positional
+        ``evaluate`` method retains its historical error for an empty full
+        archive.
+        """
+
+        if individuals is not None and archive is not None:
+            raise TypeError("Pass either individuals or archive, not both")
+        source = archive if archive is not None else individuals
+        if source is None:
+            source = self.archive
+        if source is None:
+            return None
+
+        resolved = self._resolve_individuals(source)
+        if not resolved:
+            return None
+        return self.evaluate(resolved)
+
+    # Keep both spellings available to callers describing this as an active
+    # RF evaluation rather than an active-set evaluation.
+    evaluate_active_rf = evaluate_active_set
+    evaluate_active = evaluate_active_set
+
+    def evaluate_additive_ensemble(
+        self,
+        individuals: Sequence[Any] | ArchiveSource | None = None,
+        *,
+        archive: ArchiveSource | None = None,
+    ) -> AdditiveEvaluationResult | None:
+        """Fit and score the sequential additive active residual ensemble.
+
+        The intercept is the training-label prior in logit space. Each active
+        expression then gets one depth-one weighted residual tree, fitted only
+        on the full training split. The same tree is applied to training and
+        test rows before the expression's shrunk correction is added to the
+        running logit. Test labels are used only for the final ROC AUC.
+        """
+
+        if individuals is not None and archive is not None:
+            raise TypeError("Pass either individuals or archive, not both")
+        source = archive if archive is not None else individuals
+        if source is None:
+            source = self.archive
+        if source is None:
+            return None
+
+        expressions = self._resolve_individuals(source)
+        if not expressions:
+            return None
+
+        matrix = self._feature_matrix(expressions)
+        y_train = np.asarray(self.labels[self.train_indices], dtype=np.float64)
+        y_test = np.asarray(self.labels[self.test_indices])
+        intercept_score = logit(float(np.mean(y_train)))
+        train_scores = np.full(y_train.shape, intercept_score)
+        test_scores = np.full(len(self.test_indices), intercept_score)
+        models: list[DecisionTreeRegressor] = []
+
+        for column_index, _expression in enumerate(expressions):
+            # Fit the imputer on training rows only. The current constant
+            # strategy has no learned statistic, but keeping the split boundary
+            # explicit prevents a future strategy from leaking test data.
+            imputer = SimpleImputer(strategy="constant", fill_value=0.0)
+            train_values = imputer.fit_transform(
+                matrix[self.train_indices, column_index].reshape(-1, 1)
+            )
+            test_values = imputer.transform(
+                matrix[self.test_indices, column_index].reshape(-1, 1)
+            )
+
+            if np.std(train_values[:, 0]) < 1e-8:
+                continue
+
+            residuals, weights = logit_working_response(y_train, train_scores)
+            model = DecisionTreeRegressor(**RESIDUAL_TREE_PARAMS)
+            model.fit(train_values, residuals, sample_weight=weights)
+            train_scores += RESIDUAL_SHRINKAGE * model.predict(train_values)
+            test_scores += RESIDUAL_SHRINKAGE * model.predict(test_values)
+            models.append(model)
+
+        train_predictions = sigmoid(train_scores)
+        test_predictions = sigmoid(test_scores)
+        if np.unique(y_test).size < 2:
+            raise ValueError("ROC AUC requires both target classes in the test split")
+
+        return AdditiveEvaluationResult(
+            metrics={
+                "train_auc": float(roc_auc_score(y_train, train_predictions)),
+                "test_auc": float(roc_auc_score(y_test, test_predictions)),
+            },
+            train_predictions=train_predictions,
+            test_predictions=test_predictions,
+            models=tuple(models),
+            expressions=tuple(expressions),
+        )
+
+    # Short aliases make the additive path easy to discover without changing
+    # the existing ``evaluate``/``evaluate_archive`` API.
+    evaluate_active_additive = evaluate_additive_ensemble
+    evaluate_additive = evaluate_additive_ensemble
+
     __call__ = evaluate
 
     def evaluate_archive(self, archive: ArchiveSource) -> FinalEvaluationResult:
@@ -308,6 +476,7 @@ class FinalEvaluator:
 
 __all__ = [
     "ARCHIVE_MINIMIZE",
+    "AdditiveEvaluationResult",
     "ArchiveSource",
     "TEST_SPLIT",
     "FinalEvaluationResult",

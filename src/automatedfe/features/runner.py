@@ -27,7 +27,11 @@ from geneticengine.evaluation.budget import TimeBudget
 
 from ..transaction_materialization import DEFAULT_MMAP_DIR
 from .feature_materialization import FeatureMaterializer
-from .final_evaluation import FinalEvaluationResult, FinalEvaluator
+from .final_evaluation import (
+    AdditiveEvaluationResult,
+    FinalEvaluationResult,
+    FinalEvaluator,
+)
 from .fitness import DEFAULT_N_SPLITS, DEFAULT_RANDOM_STATE
 from .grammar import collect_features, expr
 from .search.search import canonical_expression_key
@@ -294,6 +298,10 @@ class SearchRunResult:
     active_set_expressions: tuple[expr, ...] = ()
     active_set_final_evaluation: FinalEvaluationResult | None = None
     active_set_final_evaluation_duration_seconds: float | None = None
+    additive_evaluation: AdditiveEvaluationResult | None = None
+    additive_evaluation_duration_seconds: float | None = None
+    history_count: int = 0
+    active_set_count: int = 0
 
     @property
     def final_metrics(self) -> dict[str, float]:
@@ -344,6 +352,20 @@ class SearchRunResult:
         if self.active_set_final_evaluation is None:
             return None
         return self.active_set_final_evaluation.metrics
+
+    @property
+    def additive_metrics(self) -> dict[str, float] | None:
+        """Return train/test ROC AUC from the active additive ensemble."""
+
+        if self.additive_evaluation is None:
+            return None
+        return self.additive_evaluation.metrics
+
+    @property
+    def active_set_metrics(self) -> dict[str, float] | None:
+        """Compatibility alias for :attr:`active_set_final_metrics`."""
+
+        return self.active_set_final_metrics
 
     @property
     def evaluation_count(self) -> int:
@@ -435,12 +457,17 @@ def _preflight_output_paths(
     *,
     csv_path: str | PathLike[str] | None,
     archive_path: str | PathLike[str] | None,
+    history_path: str | PathLike[str] | None,
+    active_archive_path: str | PathLike[str] | None,
+    use_active_set: bool,
     force: bool,
-) -> tuple[Path | None, Path | None]:
+) -> tuple[Path | None, Path | None, Path | None, Path | None]:
     """Validate all runner outputs before setup or file creation begins."""
 
     if not isinstance(force, bool):
         raise ValueError("force must be a boolean")
+    if not isinstance(use_active_set, bool):
+        raise ValueError("use_active_set must be a boolean")
     if (
         strategy is SearchStrategy.ENUMERATIVE_WITHOUT_ARCHIVE
         and archive_path is not None
@@ -448,14 +475,38 @@ def _preflight_output_paths(
         raise ValueError(
             "archive_path is not supported for enumerative_without_archive"
         )
+    if not use_active_set and (history_path is not None or active_archive_path is not None):
+        raise ValueError(
+            "history_path and active_archive_path require use_active_set=True"
+        )
 
     resolved_csv = Path(csv_path).resolve() if csv_path is not None else None
     resolved_archive = (
         Path(archive_path).resolve() if archive_path is not None else None
     )
-    outputs = [path for path in (resolved_csv, resolved_archive) if path is not None]
+    resolved_history = (
+        Path(history_path).resolve() if history_path is not None else None
+    )
+    resolved_active_archive = (
+        Path(active_archive_path).resolve()
+        if active_archive_path is not None
+        else None
+    )
+    outputs = [
+        path
+        for path in (
+            resolved_csv,
+            resolved_archive,
+            resolved_history,
+            resolved_active_archive,
+        )
+        if path is not None
+    ]
     if len(set(outputs)) != len(outputs):
-        raise ValueError("csv_path and archive_path must identify different files")
+        raise ValueError(
+            "csv_path, archive_path, history_path, and active_archive_path "
+            "must identify different files"
+        )
     for path in outputs:
         if path.exists() and path.is_dir():
             raise ValueError(f"Output path must identify a file, not a directory: {path}")
@@ -463,7 +514,7 @@ def _preflight_output_paths(
             raise FileExistsError(
                 f"Refusing to overwrite existing output without force=True: {path}"
             )
-    return resolved_csv, resolved_archive
+    return resolved_csv, resolved_archive, resolved_history, resolved_active_archive
 
 
 def _as_expression(individual: Any) -> expr:
@@ -565,8 +616,19 @@ def run_feature_search(
     population_size: int = 50,
     max_depth: int | None = None,
     use_active_set: bool = False,
+    promotion_interval: int = 5,
+    first_promotion_top_k: int = 2,
+    promotion_add_k: int = 1,
+    promotion_refresh_top_n: int = 50,
+    archive_quality_threshold: float = 0.001,
+    archive_correlation_threshold: float = 0.85,
+    active_correlation_threshold: float = 0.90,
+    promotion_min_gain: float = 0.0,
+    promotion_mean_gain: float = 0.0005,
     csv_path: str | PathLike[str] | None = None,
     archive_path: str | PathLike[str] | None = None,
+    history_path: str | PathLike[str] | None = None,
+    active_archive_path: str | PathLike[str] | None = None,
     force: bool = False,
 ) -> SearchRunResult:
     """Run one strategy and always evaluate its selected features on test data.
@@ -579,7 +641,9 @@ def run_feature_search(
     common incremental diagnostics, while ``archive_path`` saves an evaluated
     strategy's final Pareto archive once. In genetic active-set mode, the
     Pareto archive and promoted active set are fitted and scored separately on
-    the held-out split. Existing outputs require ``force=True``.
+    the held-out split, ``history_path`` persists the complete filtered
+    history, and ``active_archive_path`` persists the versioned active
+    snapshot. Existing outputs require ``force=True``.
     """
 
     selected_strategy = _coerce_strategy(strategy)
@@ -592,10 +656,18 @@ def run_feature_search(
         time_budget_seconds=time_budget_seconds,
         candidate_count=candidate_count,
     )
-    resolved_csv_path, resolved_archive_path = _preflight_output_paths(
+    (
+        resolved_csv_path,
+        resolved_archive_path,
+        resolved_history_path,
+        resolved_active_archive_path,
+    ) = _preflight_output_paths(
         selected_strategy,
         csv_path=csv_path,
         archive_path=archive_path,
+        history_path=history_path,
+        active_archive_path=active_archive_path,
+        use_active_set=use_active_set,
         force=force,
     )
 
@@ -618,6 +690,15 @@ def run_feature_search(
             fitness_random_state=fitness_random_state,
             max_depth=max_depth,
             use_active_set=use_active_set,
+            promotion_interval=promotion_interval,
+            first_promotion_top_k=first_promotion_top_k,
+            promotion_add_k=promotion_add_k,
+            promotion_refresh_top_n=promotion_refresh_top_n,
+            archive_quality_threshold=archive_quality_threshold,
+            archive_correlation_threshold=archive_correlation_threshold,
+            active_correlation_threshold=active_correlation_threshold,
+            promotion_min_gain=promotion_min_gain,
+            promotion_mean_gain=promotion_mean_gain,
         )
         materializer = search.materializer
     elif selected_strategy is SearchStrategy.ENUMERATIVE:
@@ -733,6 +814,18 @@ def run_feature_search(
     if resolved_archive_path is not None:
         search.archive_step.save(resolved_archive_path, mapping=mapping)
 
+    if resolved_history_path is not None or resolved_active_archive_path is not None:
+        manager = getattr(search, "active_set_manager", None)
+        if manager is None:
+            raise TypeError(
+                "history_path and active_archive_path require an active-set "
+                "manager"
+            )
+        if resolved_history_path is not None:
+            manager.save_history(resolved_history_path, mapping=mapping)
+        if resolved_active_archive_path is not None:
+            manager.save_active_snapshot(resolved_active_archive_path, mapping=mapping)
+
     final_started_ns = monotonic_ns()
     final_evaluator = _build_final_evaluator(materializer, dataset_path, mapping)
     final_evaluation = final_evaluator.evaluate(expressions)
@@ -740,12 +833,26 @@ def run_feature_search(
 
     active_set_final_evaluation: FinalEvaluationResult | None = None
     active_set_final_evaluation_duration_seconds: float | None = None
+    additive_evaluation: AdditiveEvaluationResult | None = None
+    additive_evaluation_duration_seconds: float | None = None
     if active_mode and active_set_expressions:
         active_started_ns = monotonic_ns()
         active_set_final_evaluation = final_evaluator.evaluate(active_set_expressions)
         active_set_final_evaluation_duration_seconds = (
             monotonic_ns() - active_started_ns
         ) * 1e-9
+        additive_started_ns = monotonic_ns()
+        additive_evaluation = final_evaluator.evaluate_additive_ensemble(
+            active_set_expressions
+        )
+        additive_evaluation_duration_seconds = (
+            monotonic_ns() - additive_started_ns
+        ) * 1e-9
+
+    active_count_source = getattr(search, "active_set_manager", None)
+    if active_count_source is None:
+        active_count_source = getattr(search, "archive_step", None)
+    history_count = len(getattr(active_count_source, "history_individuals", ()))
 
     return SearchRunResult(
         strategy=selected_strategy,
@@ -764,6 +871,10 @@ def run_feature_search(
         active_set_final_evaluation_duration_seconds=(
             active_set_final_evaluation_duration_seconds
         ),
+        additive_evaluation=additive_evaluation,
+        additive_evaluation_duration_seconds=additive_evaluation_duration_seconds,
+        history_count=history_count,
+        active_set_count=len(active_set_expressions),
     )
 
 

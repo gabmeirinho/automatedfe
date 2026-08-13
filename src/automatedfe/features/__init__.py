@@ -1,6 +1,8 @@
 """Feature specifications, grammar nodes, materializers, and kernels."""
 
 from .archive import (
+    ACTIVE_SET_FORMAT_IDENTIFIER,
+    ACTIVE_SET_FORMAT_VERSION,
     ARCHIVE_PROXY_OBJECTIVES,
     DEFAULT_ACTIVE_CORRELATION_THRESHOLD,
     DEFAULT_ARCHIVE_CORRELATION_THRESHOLD,
@@ -12,6 +14,7 @@ from .archive import (
     DEFAULT_PROMOTION_MIN_GAIN,
     DEFAULT_PROMOTION_REFRESH_TOP_N,
     FORMAT_VERSION,
+    ActiveSetSnapshot,
     ArchiveSnapshot,
     ArchiveStep,
     ActiveSetManager,
@@ -21,6 +24,7 @@ from .archive import (
     decode_expression,
     encode_expression,
     is_correlated_pairwise,
+    load_active_set_snapshot,
     load_archive,
     validate_archive_quality_threshold,
     validate_correlation_threshold,
@@ -61,6 +65,7 @@ from .feature_spec import (
 from .feature_types import TxFeature
 from .final_evaluation import (
     ARCHIVE_MINIMIZE,
+    AdditiveEvaluationResult,
     TEST_SPLIT,
     ArchiveSource,
     FinalEvaluationResult,
@@ -74,6 +79,9 @@ from .fitness import (
     RandomForestFitness,
     ResidualEvaluator,
     ResidualFitness,
+    logit,
+    logit_working_response,
+    sigmoid,
 )
 from .grammar import (
     NON_TERMINALS,
@@ -145,6 +153,8 @@ from .search import (
 )
 
 __all__ = [
+    "ACTIVE_SET_FORMAT_IDENTIFIER",
+    "ACTIVE_SET_FORMAT_VERSION",
     "AMOUNT_COLUMN",
     "ARCHIVE_MINIMIZE",
     "ARCHIVE_PROXY_OBJECTIVES",
@@ -194,8 +204,10 @@ __all__ = [
     "ArchiveSource",
     "ArchiveStep",
     "ActiveSetManager",
+    "ActiveSetSnapshot",
     "ActiveResidualEvaluator",
     "ActiveResidualFitness",
+    "AdditiveEvaluationResult",
     "ArithmeticOp",
     "AvgDailyAmount",
     "AvgDailyAmountCategory",
@@ -226,6 +238,9 @@ __all__ = [
     "RateAgg",
     "ResidualEvaluator",
     "ResidualFitness",
+    "logit",
+    "logit_working_response",
+    "sigmoid",
     "RowWindow",
     "RunnerDiagnosticsRecorder",
     "SafeDiv",
@@ -258,6 +273,7 @@ __all__ = [
     "expr",
     "is_correlated_pairwise",
     "iter_bounded_expressions",
+    "load_active_set_snapshot",
     "load_archive",
     "materialize_aggregation",
     "materialize_feature",

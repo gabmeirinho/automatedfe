@@ -1,4 +1,6 @@
 import csv
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -29,6 +31,16 @@ class _FinalEvaluator:
     def evaluate(self, expressions):
         self.received.extend(expressions)
         return SimpleNamespace(metrics={"roc_auc": 0.75})
+
+    def evaluate_additive_ensemble(self, expressions):
+        self.received.extend(expressions)
+        return SimpleNamespace(
+            metrics={"train_auc": 0.80, "test_auc": 0.70},
+            train_predictions=None,
+            test_predictions=None,
+            models=(),
+            expressions=tuple(expressions),
+        )
 
 
 def test_evaluation_free_runner_writes_common_generated_rows(tmp_path, monkeypatch):
@@ -298,7 +310,138 @@ def test_active_runner_evaluates_archive_and_active_set_separately(
     assert builder_arguments["use_active_set"] is True
     assert result.expressions == (archive_expression,)
     assert result.active_set_expressions == (active_expression,)
-    assert received == [archive_expression, active_expression]
+    assert received == [archive_expression, active_expression, active_expression]
     assert result.archive_final_evaluation is result.final_evaluation
     assert result.active_set_final_evaluation is not None
     assert result.active_set_final_metrics == {"roc_auc": 0.75}
+    assert result.additive_metrics == {"train_auc": 0.80, "test_auc": 0.70}
+    assert result.history_count == 0
+    assert result.active_set_count == 1
+    assert result.additive_evaluation_duration_seconds is not None
+
+
+def test_runner_rejects_history_paths_without_active_set(tmp_path):
+    with pytest.raises(ValueError, match="require use_active_set=True"):
+        run_feature_search(
+            "genetic",
+            time_budget_seconds=0.001,
+            dataset_path=tmp_path / "dataset.parquet",
+            mapping=LABEL_MAPPING,
+            history_path=tmp_path / "history.json",
+        )
+    with pytest.raises(ValueError, match="require use_active_set=True"):
+        run_feature_search(
+            "genetic",
+            time_budget_seconds=0.001,
+            dataset_path=tmp_path / "dataset.parquet",
+            mapping=LABEL_MAPPING,
+            active_archive_path=tmp_path / "active.json",
+        )
+
+
+def test_runner_preflights_history_and_active_collisions(tmp_path, monkeypatch):
+    setup_called = False
+
+    def fail_if_built(*_args, **_kwargs):
+        nonlocal setup_called
+        setup_called = True
+        raise AssertionError("search setup should not run")
+
+    monkeypatch.setattr(runner_module, "build_search_algorithm", fail_if_built)
+
+    with pytest.raises(ValueError, match="must identify different files"):
+        run_feature_search(
+            "genetic",
+            time_budget_seconds=0.001,
+            dataset_path=tmp_path / "dataset.parquet",
+            mapping=LABEL_MAPPING,
+            use_active_set=True,
+            archive_path=tmp_path / "artifact.json",
+            history_path=tmp_path / "artifact.json",
+        )
+    path = tmp_path / "existing.json"
+    path.write_text("keep me")
+    with pytest.raises(FileExistsError, match="force=True"):
+        run_feature_search(
+            "genetic",
+            time_budget_seconds=0.001,
+            dataset_path=tmp_path / "dataset.parquet",
+            mapping=LABEL_MAPPING,
+            use_active_set=True,
+            history_path=path,
+        )
+
+    assert not setup_called
+    assert path.read_text() == "keep me"
+
+
+def test_active_runner_persists_history_and_active_snapshot(tmp_path, monkeypatch):
+    received = []
+    saved = {"history": None, "active": None}
+
+    class StubManager:
+        history_individuals = ("history-expression",)
+
+        def save_history(self, path, *, mapping=None):
+            saved["history"] = (Path(path).resolve(), mapping)
+            Path(path).write_text(json.dumps({"format": "history"}))
+
+        def save_active_snapshot(self, path, *, mapping=None):
+            saved["active"] = (Path(path).resolve(), mapping)
+            Path(path).write_text(json.dumps({"format": "active"}))
+
+    class StubArchive:
+        use_active_set = True
+        archive = ["archive-expression"]
+        active_individuals = ["active-expression"]
+
+        def save(self, path, *, mapping=None):
+            Path(path).write_text(json.dumps({"format": "archive"}))
+
+    class StubSearch:
+        archive_step = StubArchive()
+        archive = archive_step
+        active_set_manager = StubManager()
+        materializer = object()
+        tracker = SimpleNamespace(
+            start_time=0,
+            get_number_evaluations=lambda: 0,
+            recorders=[],
+        )
+        generated_count = 2
+        invalid_count = 0
+        duplicate_count = 0
+        grammar_exhausted = False
+
+        def search(self):
+            return []
+
+    monkeypatch.setattr(runner_module, "build_search_algorithm", lambda *_a, **_k: StubSearch())
+    monkeypatch.setattr(
+        runner_module,
+        "_build_final_evaluator",
+        lambda *_args, **_kwargs: _FinalEvaluator(received),
+    )
+
+    archive_path = tmp_path / "archive.json"
+    history_path = tmp_path / "history.json"
+    active_path = tmp_path / "active.json"
+    run_feature_search(
+        "genetic",
+        time_budget_seconds=0.001,
+        dataset_path=tmp_path / "dataset.parquet",
+        mapping=LABEL_MAPPING,
+        mmap_dir=tmp_path / "mmap",
+        use_active_set=True,
+        archive_path=archive_path,
+        history_path=history_path,
+        active_archive_path=active_path,
+    )
+
+    assert json.loads(archive_path.read_text()) == {"format": "archive"}
+    assert json.loads(history_path.read_text()) == {"format": "history"}
+    assert json.loads(active_path.read_text()) == {"format": "active"}
+    assert saved["history"][0] == history_path.resolve()
+    assert saved["active"][0] == active_path.resolve()
+    assert saved["history"][1] == LABEL_MAPPING
+    assert saved["active"][1] == LABEL_MAPPING

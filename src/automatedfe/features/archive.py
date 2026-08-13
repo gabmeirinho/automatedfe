@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 FORMAT_IDENTIFIER = "automatedfe-archive"
 FORMAT_VERSION = 1
+ACTIVE_SET_FORMAT_IDENTIFIER = "automatedfe-active-set"
+ACTIVE_SET_FORMAT_VERSION = 1
 OBJECTIVES_PER_ARCHIVE = 4
 ARCHIVE_PROXY_OBJECTIVES = 3
 DEFAULT_ARCHIVE_QUALITY_THRESHOLD = 0.001
@@ -287,6 +289,30 @@ class ArchiveSnapshot:
         return len(self.expressions)
 
 
+@dataclass(frozen=True, slots=True)
+class ActiveSetSnapshot:
+    """A loaded active-set snapshot in promotion order.
+
+    ``expressions`` and ``gains`` contain only the promoted candidates;
+    ``promotion_events`` and ``promotion_checks`` retain the full auditable
+    promotion history even when the final active set is empty.
+    """
+
+    version: int
+    baseline_version: int
+    minimize: tuple[bool, ...]
+    mapping: Mapping[str, Mapping[str, int]]
+    expressions: tuple[expr, ...]
+    gains: tuple[tuple[float, ...], ...]
+    promotion_generations: tuple[int | None, ...]
+    promoted_baseline_versions: tuple[int | None, ...]
+    promotion_events: tuple[dict[str, object], ...]
+    promotion_checks: tuple[dict[str, object], ...]
+
+    def __len__(self) -> int:
+        return len(self.expressions)
+
+
 def _resolve_mapping(
     mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None,
 ) -> Mapping[str, Mapping[str, int]]:
@@ -466,6 +492,161 @@ def load_archive(
         mapping=mapping_data,
         expressions=expressions,
         objectives=objectives,
+    )
+
+
+def _validate_active_set_entries(data: object) -> list[dict[str, object]]:
+    if not isinstance(data, list):
+        raise TypeError("Active-set 'expressions' must be a JSON list")
+    allowed = {
+        "expression",
+        "gains",
+        "promotion_generation",
+        "promoted_baseline_version",
+    }
+    entries: list[dict[str, object]] = []
+    for index, entry in enumerate(data):
+        if not isinstance(entry, dict) or "expression" not in entry:
+            raise ValueError(
+                f"Active-set entry {index} must contain an 'expression' key"
+            )
+        unknown = set(entry) - allowed
+        if unknown:
+            raise ValueError(
+                f"Active-set entry {index} has unknown keys: {sorted(unknown)}"
+            )
+        for name in ("promotion_generation", "promoted_baseline_version"):
+            value = entry.get(name)
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+            ):
+                raise ValueError(
+                    f"Active-set entry {index} must declare a non-negative "
+                    f"integer {name}"
+                )
+        gains = entry.get("gains")
+        if gains is not None and (
+            not isinstance(gains, list)
+            or not all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in gains
+            )
+        ):
+            raise ValueError(
+                f"Active-set entry {index} must declare numeric gain values"
+            )
+        entries.append(entry)
+    return entries
+
+
+def load_active_set_snapshot(
+    path: str | PathLike[str],
+    *,
+    mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None = None,
+) -> ActiveSetSnapshot:
+    """Load and validate an active-set snapshot JSON file.
+
+    The label mapping embedded in the snapshot is validated against *mapping*
+    when one is provided. An empty active set loads normally: the returned
+    snapshot has no expressions while still carrying the promotion history.
+    """
+
+    snapshot_path = Path(path).resolve()
+    if not snapshot_path.is_file():
+        raise FileNotFoundError(
+            f"Active-set JSON file does not exist: {snapshot_path}"
+        )
+    try:
+        with open(snapshot_path) as snapshot_file:
+            data = json.load(snapshot_file)
+    except json.JSONDecodeError as error:
+        raise ValueError(
+            f"Active-set snapshot is not valid JSON: {snapshot_path}: {error}"
+        ) from error
+
+    if not isinstance(data, dict):
+        raise TypeError(f"Active-set JSON must be an object: {snapshot_path}")
+    if data.get("format") != ACTIVE_SET_FORMAT_IDENTIFIER:
+        raise ValueError(
+            f"Unknown active-set format: {data.get('format')!r}"
+        )
+    version = data.get("version")
+    if version != ACTIVE_SET_FORMAT_VERSION:
+        raise ValueError(
+            f"Unsupported active-set version {version!r} "
+            f"(expected {ACTIVE_SET_FORMAT_VERSION})"
+        )
+    problem = data.get("problem")
+    if not isinstance(problem, dict):
+        raise TypeError("Active-set snapshot is missing its 'problem' metadata")
+    n_objectives = problem.get("number_of_objectives")
+    minimize = problem.get("minimize")
+    if n_objectives != OBJECTIVES_PER_ARCHIVE:
+        raise ValueError(
+            f"Active-set problem must declare {OBJECTIVES_PER_ARCHIVE} objectives"
+        )
+    if not isinstance(minimize, list) or len(minimize) != n_objectives:
+        raise ValueError(
+            f"Active-set problem must declare exactly {n_objectives} "
+            "minimization directions"
+        )
+    if not all(isinstance(value, bool) for value in minimize):
+        raise ValueError("Active-set minimization directions must be boolean values")
+    baseline_version = data.get("baseline_version")
+    if isinstance(baseline_version, bool) or not isinstance(baseline_version, int):
+        raise ValueError("Active-set baseline_version must be an integer")
+    if baseline_version < 0:
+        raise ValueError("Active-set baseline_version must be non-negative")
+
+    mapping_data = data.get("mapping")
+    if not isinstance(mapping_data, dict):
+        raise TypeError("Active-set snapshot is missing its 'mapping' metadata")
+    try:
+        code_lists_from_mapping(mapping_data)
+    except ValueError as error:
+        raise ValueError(f"Active-set label mapping is invalid: {error}") from error
+    if mapping is not None:
+        _validate_mapping_compatible(mapping_data, _resolve_mapping(mapping))
+
+    entries = _validate_active_set_entries(data.get("expressions"))
+    events = data.get("promotion_events")
+    checks = data.get("promotion_checks")
+    if not isinstance(events, list) or not isinstance(checks, list):
+        raise TypeError(
+            "Active-set snapshot must declare 'promotion_events' and "
+            "'promotion_checks' lists"
+        )
+
+    expressions = tuple(decode_expression(entry["expression"]) for entry in entries)
+    gains = tuple(
+        tuple(float(value) for value in entry["gains"])
+        if entry.get("gains") is not None
+        else ()
+        for entry in entries
+    )
+    promotion_generations = tuple(
+        int(entry["promotion_generation"])
+        if entry.get("promotion_generation") is not None
+        else None
+        for entry in entries
+    )
+    promoted_baseline_versions = tuple(
+        int(entry["promoted_baseline_version"])
+        if entry.get("promoted_baseline_version") is not None
+        else None
+        for entry in entries
+    )
+    return ActiveSetSnapshot(
+        version=version,
+        baseline_version=baseline_version,
+        minimize=tuple(minimize),
+        mapping=mapping_data,
+        expressions=expressions,
+        gains=gains,
+        promotion_generations=promotion_generations,
+        promoted_baseline_versions=promoted_baseline_versions,
+        promotion_events=tuple(dict(event) for event in events),
+        promotion_checks=tuple(dict(check) for check in checks),
     )
 
 
@@ -872,6 +1053,8 @@ class _ActiveSetManagerBase(ArchiveStep):
             self.active_individuals.append(candidate)
             self.baseline_version += 1
             candidate.metadata["promoted_baseline_version"] = self.baseline_version
+            candidate.metadata["promotion_generation"] = generation
+            candidate.metadata["promotion_gains"] = [float(value) for value in gains]
             promoted += 1
             logger.info(
                 "Promoted active candidate %s at generation %d: min_gain=%.6f mean_gain=%.6f",
@@ -893,6 +1076,95 @@ class _ActiveSetManagerBase(ArchiveStep):
                 }
             )
         return promoted > 0
+
+    def save_history(
+        self,
+        path: str | PathLike[str],
+        *,
+        mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None = None,
+    ) -> Path:
+        """Write the complete filtered history to an atomic JSON snapshot.
+
+        The document reuses the archive representation so the snapshot can be
+        reloaded with :func:`load_archive`. Objectives are the immutable
+        admission values, never later baseline refreshes.
+        """
+
+        save_path = Path(path).resolve()
+        if self._problem is None:
+            raise ValueError(
+                "Cannot save a history that has not processed a population"
+            )
+        resolved_mapping = mapping if mapping is not None else self._mapping
+        document = _build_document(
+            expressions=[
+                individual.get_phenotype() for individual in self.history
+            ],
+            objectives=[
+                self._admission_objectives_for(index)
+                for index in range(len(self.history))
+            ],
+            minimize=self._problem.minimize,
+            mapping=_resolve_mapping(resolved_mapping),
+        )
+        return _atomic_write_json(save_path, document)
+
+    def save_active_snapshot(
+        self,
+        path: str | PathLike[str],
+        *,
+        mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None = None,
+    ) -> Path:
+        """Write the promoted active set with its promotion history.
+
+        Each entry stores the promotion-time split gains, the generation it
+        was promoted at, and the baseline version it was scored against.
+        ``promotion_events`` and ``promotion_checks`` retain the complete
+        auditable history, so an empty requested snapshot is written without
+        errors.
+        """
+
+        save_path = Path(path).resolve()
+        if self._problem is None:
+            raise ValueError(
+                "Cannot save an active set that has not processed a population"
+            )
+        resolved_mapping = mapping if mapping is not None else self._mapping
+        entries: list[dict[str, object]] = []
+        for individual in self.active_individuals:
+            key = self._expression_key(individual)
+            metadata = individual.metadata
+            gains = metadata.get("promotion_gains")
+            if gains is None:
+                gains = self.admission_objectives.get(key, ())
+            entries.append(
+                {
+                    "expression": encode_expression(individual.get_phenotype()),
+                    "gains": [float(value) for value in gains],
+                    "promotion_generation": metadata.get("promotion_generation"),
+                    "promoted_baseline_version": metadata.get(
+                        "promoted_baseline_version"
+                    ),
+                }
+            )
+        document: dict[str, object] = {
+            "format": ACTIVE_SET_FORMAT_IDENTIFIER,
+            "version": ACTIVE_SET_FORMAT_VERSION,
+            "problem": {
+                "number_of_objectives": OBJECTIVES_PER_ARCHIVE,
+                "minimize": [bool(value) for value in self._problem.minimize],
+            },
+            "mapping": {
+                family: dict(values)
+                for family, values in _resolve_mapping(resolved_mapping).items()
+            },
+            "baseline_version": self.baseline_version,
+            "expressions": entries,
+            "promotion_events": [dict(event) for event in self.promotion_events],
+            "promotion_checks": [dict(check) for check in self.promotion_checks],
+            "active_size": len(self.active_individuals),
+        }
+        return _atomic_write_json(save_path, document)
 
     def _refresh_history(self, evaluator: Evaluator, problem: Problem) -> None:
         """Refresh a bounded proxy shortlist before the exact promotion scan."""
@@ -1463,6 +1735,8 @@ GPArchiveStep = ArchiveStep
 
 
 __all__ = [
+    "ACTIVE_SET_FORMAT_IDENTIFIER",
+    "ACTIVE_SET_FORMAT_VERSION",
     "ARCHIVE_PROXY_OBJECTIVES",
     "DEFAULT_ACTIVE_CORRELATION_THRESHOLD",
     "DEFAULT_ARCHIVE_CORRELATION_THRESHOLD",
@@ -1476,6 +1750,7 @@ __all__ = [
     "FORMAT_IDENTIFIER",
     "FORMAT_VERSION",
     "OBJECTIVES_PER_ARCHIVE",
+    "ActiveSetSnapshot",
     "ArchiveSnapshot",
     "ArchiveStep",
     "ActiveSetManager",
@@ -1485,6 +1760,7 @@ __all__ = [
     "decode_expression",
     "encode_expression",
     "is_correlated_pairwise",
+    "load_active_set_snapshot",
     "load_archive",
     "validate_archive_quality_threshold",
     "validate_correlation_threshold",
