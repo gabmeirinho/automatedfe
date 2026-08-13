@@ -408,7 +408,8 @@ def test_archive_loading_types_are_importable_from_public_packages():
     from automatedfe import ArchiveSnapshot as RootArchiveSnapshot
     from automatedfe import ArchiveStep as RootArchiveStep
     from automatedfe import load_archive as root_load_archive
-    from automatedfe.features import ArchiveSnapshot, ArchiveSource, ArchiveStep
+    from automatedfe.evaluation import ArchiveSource
+    from automatedfe.features import ArchiveSnapshot, ArchiveStep
 
     assert RootArchiveSnapshot is ArchiveSnapshot
     assert RootArchiveStep is ArchiveStep

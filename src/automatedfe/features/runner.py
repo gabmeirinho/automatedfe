@@ -27,12 +27,12 @@ from geneticengine.evaluation.budget import TimeBudget
 
 from ..data.transaction_materialization import DEFAULT_MMAP_DIR
 from .feature_materialization import FeatureMaterializer
-from .final_evaluation import (
+from ..evaluation.final_evaluation import (
     AdditiveEvaluationResult,
     FinalEvaluationResult,
     FinalEvaluator,
 )
-from .fitness import DEFAULT_N_SPLITS, DEFAULT_RANDOM_STATE
+from ..evaluation.fitness import DEFAULT_N_SPLITS, DEFAULT_RANDOM_STATE
 from .grammar import collect_features, expr
 from .search.search import canonical_expression_key
 from .search.enumerative_search import build_enumerative_search

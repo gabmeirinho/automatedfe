@@ -1,9 +1,8 @@
 """Feature-domain APIs and compatibility re-exports.
 
-Feature specifications, grammar nodes, kernels, and feature materialization
-are the long-term responsibility of this namespace.  Archive, evaluation,
-and search symbols remain re-exported here for compatibility until their
-canonical namespaces finish migrating in phase 2.
+Feature specifications, grammar nodes, kernels, feature materialization, and
+the in-progress archive/search compatibility surface belong to this
+namespace. Model evaluation is canonical under :mod:`automatedfe.evaluation`.
 """
 
 from .archive import (
@@ -69,26 +68,6 @@ from .feature_spec import (
     Window,
 )
 from .feature_types import TxFeature
-from .final_evaluation import (
-    ARCHIVE_MINIMIZE,
-    AdditiveEvaluationResult,
-    TEST_SPLIT,
-    ArchiveSource,
-    FinalEvaluationResult,
-    FinalEvaluator,
-)
-from .fitness import (
-    ActiveResidualEvaluator,
-    ActiveResidualFitness,
-    FitnessEvaluator,
-    NumericalFitnessError,
-    RandomForestFitness,
-    ResidualEvaluator,
-    ResidualFitness,
-    logit,
-    logit_working_response,
-    sigmoid,
-)
 from .grammar import (
     NON_TERMINALS,
     TERMINALS,
@@ -162,7 +141,6 @@ __all__ = [
     "ACTIVE_SET_FORMAT_IDENTIFIER",
     "ACTIVE_SET_FORMAT_VERSION",
     "AMOUNT_COLUMN",
-    "ARCHIVE_MINIMIZE",
     "ARCHIVE_PROXY_OBJECTIVES",
     "DEFAULT_ACTIVE_CORRELATION_THRESHOLD",
     "CATEGORY_KINDS",
@@ -191,7 +169,6 @@ __all__ = [
     "ROW_WINDOWS",
     "SUM",
     "TERMINALS",
-    "TEST_SPLIT",
     "TIME_WINDOW",
     "TIME_WINDOWS",
     "TOTAL_HISTORY",
@@ -207,13 +184,9 @@ __all__ = [
     "Aggregation",
     "AmountAgg",
     "ArchiveSnapshot",
-    "ArchiveSource",
     "ArchiveStep",
     "ActiveSetManager",
     "ActiveSetSnapshot",
-    "ActiveResidualEvaluator",
-    "ActiveResidualFitness",
-    "AdditiveEvaluationResult",
     "ArithmeticOp",
     "AvgDailyAmount",
     "AvgDailyAmountCategory",
@@ -229,9 +202,6 @@ __all__ = [
     "DailyAgg",
     "EnumerationResult",
     "FeatureMaterializer",
-    "FinalEvaluationResult",
-    "FinalEvaluator",
-    "FitnessEvaluator",
     "GPArchiveStep",
     "Log",
     "MaterializingArchiveSearch",
@@ -239,14 +209,7 @@ __all__ = [
     "MaxAmount",
     "MeanAmount",
     "Mul",
-    "NumericalFitnessError",
-    "RandomForestFitness",
     "RateAgg",
-    "ResidualEvaluator",
-    "ResidualFitness",
-    "logit",
-    "logit_working_response",
-    "sigmoid",
     "RowWindow",
     "RunnerDiagnosticsRecorder",
     "SafeDiv",

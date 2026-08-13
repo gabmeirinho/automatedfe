@@ -44,7 +44,7 @@ from ..archive import (
 )
 from ..feature_materialization import FeatureMaterializer
 from ..feature_types import TxFeature
-from ..fitness import (
+from ...evaluation.fitness import (
     DEFAULT_N_SPLITS,
     ActiveResidualEvaluator,
     NumericalFitnessError,

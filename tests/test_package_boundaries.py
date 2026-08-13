@@ -1,4 +1,4 @@
-"""Import and compatibility checks for the phase-one package boundaries."""
+"""Import and compatibility checks for the domain package boundaries."""
 
 from pathlib import Path
 
@@ -9,7 +9,7 @@ import automatedfe.evaluation
 import automatedfe.search
 
 
-def test_domain_namespaces_import_without_moving_implementations():
+def test_domain_namespaces_import_and_preserve_public_exports():
     assert automatedfe.data.encode_transactions is automatedfe.encode_transactions
     assert automatedfe.data.preprocess is automatedfe.preprocess
     assert automatedfe.data.sort_transactions is automatedfe.sort_transactions
@@ -21,7 +21,9 @@ def test_domain_namespaces_import_without_moving_implementations():
     assert (
         automatedfe.evaluation.FitnessEvaluator is automatedfe.FitnessEvaluator
     )
-    assert automatedfe.evaluation.FinalEvaluator is automatedfe.features.FinalEvaluator
+    assert automatedfe.evaluation.FinalEvaluator is (
+        automatedfe.evaluation.final_evaluation.FinalEvaluator
+    )
 
     assert automatedfe.search.SearchStrategy is automatedfe.SearchStrategy
     assert automatedfe.search.run_feature_search is automatedfe.run_feature_search
@@ -41,6 +43,15 @@ def test_data_pipeline_implementations_have_canonical_module_paths():
         "automatedfe.data.validation"
     )
     assert automatedfe.data.PROJECT_ROOT == Path(__file__).resolve().parents[1]
+
+
+def test_evaluation_implementations_have_canonical_module_paths():
+    assert automatedfe.evaluation.FitnessEvaluator.__module__ == (
+        "automatedfe.evaluation.fitness"
+    )
+    assert automatedfe.evaluation.FinalEvaluator.__module__ == (
+        "automatedfe.evaluation.final_evaluation"
+    )
 
 
 def test_cli_namespace_has_no_import_side_effect_exports_yet():

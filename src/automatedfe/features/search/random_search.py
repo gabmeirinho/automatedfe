@@ -10,7 +10,7 @@ from geneticengine.random.sources import NativeRandomSource
 from geneticengine.representations.tree.treebased import TreeBasedRepresentation
 from geneticengine.solutions.individual import PhenotypicIndividual
 
-from ..fitness import DEFAULT_N_SPLITS
+from ...evaluation.fitness import DEFAULT_N_SPLITS
 from .search import (
     MaterializingArchiveSearch,
     _build_evaluated_search,

@@ -53,7 +53,7 @@ from .features.runner import (
     run_feature_search,
     write_summary_json,
 )
-from .fitness import (
+from .evaluation import (
     ActiveResidualEvaluator,
     ActiveResidualFitness,
     FitnessEvaluator,

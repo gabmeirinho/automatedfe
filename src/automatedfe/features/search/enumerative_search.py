@@ -11,7 +11,7 @@ from geneticengine.evaluation.budget import SearchBudget
 from geneticengine.grammar.grammar import Grammar
 from geneticengine.solutions.individual import ConcreteIndividual, PhenotypicIndividual
 
-from ..fitness import DEFAULT_N_SPLITS
+from ...evaluation.fitness import DEFAULT_N_SPLITS
 from ..grammar import expr, tree_depth
 from .search import (
     DEFAULT_MAX_DEPTH,

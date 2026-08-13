@@ -14,7 +14,7 @@ from automatedfe.features import (
     run_feature_search,
     write_summary_json,
 )
-from automatedfe.fitness import DEFAULT_RANDOM_STATE
+from automatedfe.evaluation.fitness import DEFAULT_RANDOM_STATE
 from automatedfe.data.sorting import DEFAULT_DATASET_OUTPUT
 from automatedfe.data.transaction_materialization import DEFAULT_MMAP_DIR
 

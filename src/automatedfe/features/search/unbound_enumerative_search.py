@@ -86,7 +86,7 @@ def build_unbound_enumerative_search(
     """Build an unbound generator for one batch of enumerated expressions.
 
     The returned expressions can be passed directly to
-    :class:`automatedfe.features.final_evaluation.FinalEvaluator`.
+    :class:`automatedfe.evaluation.final_evaluation.FinalEvaluator`.
     """
 
     if candidate_count <= 0:
