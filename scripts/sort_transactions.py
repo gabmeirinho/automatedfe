@@ -6,7 +6,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from automatedfe.sorting import (
+from automatedfe.data.sorting import (
     DEFAULT_CARD_TOKENS_INPUT,
     DEFAULT_INPUT,
     DEFAULT_MERCHANTS_INPUT,

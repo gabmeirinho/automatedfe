@@ -1,13 +1,19 @@
-"""Reusable dataset sorting, validation, and encoding functions."""
+"""Compatibility facade for the automated feature-engineering package.
 
-from .encoding import (
+The package-level exports remain stable during the namespace migration.  New
+code can use ``automatedfe.data`` for the data pipeline,
+``automatedfe.evaluation`` for model evaluation, ``automatedfe.search`` for
+search orchestration, and ``automatedfe.cli`` for command-line adapters.
+"""
+
+from .data.encoding import (
     CATEGORICAL_COLUMNS,
     DEFAULT_MAPPING_OUTPUT,
     encode_transactions,
     fit_label_mapping,
     load_label_mapping,
 )
-from .features.archive import (
+from .search.archive import (
     ACTIVE_SET_FORMAT_IDENTIFIER,
     ACTIVE_SET_FORMAT_VERSION,
     ARCHIVE_PROXY_OBJECTIVES,
@@ -39,7 +45,7 @@ from .features.feature_materialization import (
     materialize_feature,
     materialize_individual,
 )
-from .features.runner import (
+from .search.runner import (
     DIAGNOSTIC_COLUMNS,
     RunnerDiagnosticsRecorder,
     SearchRunResult,
@@ -47,7 +53,7 @@ from .features.runner import (
     run_feature_search,
     write_summary_json,
 )
-from .fitness import (
+from .evaluation import (
     ActiveResidualEvaluator,
     ActiveResidualFitness,
     FitnessEvaluator,
@@ -56,8 +62,8 @@ from .fitness import (
     ResidualEvaluator,
     ResidualFitness,
 )
-from .preprocessing import preprocess
-from .sorting import (
+from .data.preprocessing import preprocess
+from .data.sorting import (
     DEFAULT_CARD_TOKENS_INPUT,
     DEFAULT_DATASET_INPUT,
     DEFAULT_DATASET_OUTPUT,
@@ -69,14 +75,14 @@ from .sorting import (
     sort_dataset,
     sort_transactions,
 )
-from .transaction_materialization import (
+from .data.transaction_materialization import (
     DEFAULT_MMAP_DIR,
     column_dtype,
     load_mmapped_columns,
     materialize_transactions,
     read_manifest,
 )
-from .validation import first_sorting_violation
+from .data.validation import first_sorting_violation
 
 __all__ = [
     "ACTIVE_SET_FORMAT_IDENTIFIER",

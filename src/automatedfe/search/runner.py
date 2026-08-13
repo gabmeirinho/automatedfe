@@ -25,20 +25,20 @@ from typing import Any, TextIO
 
 from geneticengine.evaluation.budget import TimeBudget
 
-from ..transaction_materialization import DEFAULT_MMAP_DIR
-from .feature_materialization import FeatureMaterializer
-from .final_evaluation import (
+from ..data.transaction_materialization import DEFAULT_MMAP_DIR
+from ..evaluation.final_evaluation import (
     AdditiveEvaluationResult,
     FinalEvaluationResult,
     FinalEvaluator,
 )
-from .fitness import DEFAULT_N_SPLITS, DEFAULT_RANDOM_STATE
-from .grammar import collect_features, expr
-from .search.search import canonical_expression_key
-from .search.enumerative_search import build_enumerative_search
-from .search.gp import build_search_algorithm
-from .search.random_search import build_random_search
-from .search.unbound_enumerative_search import build_unbound_enumerative_search
+from ..evaluation.fitness import DEFAULT_N_SPLITS, DEFAULT_RANDOM_STATE
+from ..features.feature_materialization import FeatureMaterializer
+from ..features.grammar import collect_features, expr
+from .search import canonical_expression_key
+from .enumerative_search import build_enumerative_search
+from .gp import build_search_algorithm
+from .random_search import build_random_search
+from .unbound_enumerative_search import build_unbound_enumerative_search
 
 
 class SearchStrategy(str, Enum):

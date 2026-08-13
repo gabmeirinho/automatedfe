@@ -16,8 +16,8 @@ from sklearn.impute import SimpleImputer
 from sklearn.metrics import roc_auc_score
 from sklearn.tree import DecisionTreeRegressor
 
-from .archive import ArchiveSnapshot, ArchiveStep, load_archive
-from .feature_materialization import FeatureMaterializer
+from ..search.archive import ArchiveSnapshot, ArchiveStep, load_archive
+from ..features.feature_materialization import FeatureMaterializer
 from .fitness import (
     DATASET_MERCHANT_COLUMN,
     DATASET_TARGET_COLUMN,
@@ -30,8 +30,8 @@ from .fitness import (
     logit_working_response,
     sigmoid,
 )
-from .grammar import build_grammar
-from .search.search import canonical_expression_key
+from ..features.grammar import build_grammar
+from ..search.search import canonical_expression_key
 
 TEST_SPLIT = "test"
 ARCHIVE_MINIMIZE = (False, False, False, True)
@@ -116,7 +116,7 @@ def _validate_archive_snapshot(
     if mapping is not None:
         # ``load_archive`` performs this check for paths. A snapshot may have
         # been loaded without a mapping, so apply the same validation here.
-        from .archive import _resolve_mapping, _validate_mapping_compatible
+        from ..search.archive import _resolve_mapping, _validate_mapping_compatible
 
         _validate_mapping_compatible(snapshot.mapping, _resolve_mapping(mapping))
 

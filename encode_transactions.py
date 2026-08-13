@@ -1,6 +1,6 @@
 """Backward-compatible wrapper for the transaction label-encoding CLI."""
 
-from automatedfe.encoding import (
+from automatedfe.data.encoding import (
     DEFAULT_DATASET_INPUT,
     DEFAULT_INPUT,
     DEFAULT_MAPPING_OUTPUT,

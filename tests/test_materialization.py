@@ -15,7 +15,7 @@ from automatedfe.features import (
     collect_features,
     materialize_feature,
 )
-from automatedfe.transaction_materialization import (
+from automatedfe.data.transaction_materialization import (
     MANIFEST_FILENAME,
     MMAP_SUFFIX,
     column_dtype,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from automatedfe.validation import DEFAULT_OUTPUT, first_sorting_violation
+from automatedfe.data.validation import DEFAULT_OUTPUT, first_sorting_violation
 
 
 def main() -> None:

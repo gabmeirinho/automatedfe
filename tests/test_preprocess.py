@@ -2,7 +2,7 @@ from pathlib import Path
 
 import duckdb
 
-from automatedfe.preprocessing import preprocess
+from automatedfe.data.preprocessing import preprocess
 
 
 def write_pipeline_fixtures(tmp_path):

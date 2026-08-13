@@ -1,6 +1,6 @@
 """Backward-compatible wrapper for the transaction sorting CLI."""
 
-from automatedfe.sorting import (
+from automatedfe.data.sorting import (
     DEFAULT_CARD_TOKENS_INPUT,
     DEFAULT_INPUT,
     DEFAULT_MERCHANTS_INPUT,

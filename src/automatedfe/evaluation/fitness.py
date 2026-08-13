@@ -16,7 +16,7 @@ from sklearn.metrics import brier_score_loss, roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.tree import DecisionTreeRegressor
 
-from .feature_materialization import FeatureMaterializer
+from ..features.feature_materialization import FeatureMaterializer
 
 logger = logging.getLogger(__name__)
 

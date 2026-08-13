@@ -1,18 +1,37 @@
-"""Feature-search strategies and their shared evaluated-search lifecycle."""
+"""Canonical archive, feature-search, and search-orchestration APIs.
 
-from ..archive import (
+Archive state, candidate-search strategies, and high-level orchestration live
+in this package.
+"""
+
+from .archive import (
+    ACTIVE_SET_FORMAT_IDENTIFIER,
+    ACTIVE_SET_FORMAT_VERSION,
+    ARCHIVE_PROXY_OBJECTIVES,
     DEFAULT_ACTIVE_CORRELATION_THRESHOLD,
+    DEFAULT_ARCHIVE_CORRELATION_THRESHOLD,
+    DEFAULT_ARCHIVE_QUALITY_THRESHOLD,
     DEFAULT_FIRST_PROMOTION_TOP_K,
     DEFAULT_PROMOTION_ADD_K,
     DEFAULT_PROMOTION_INTERVAL,
     DEFAULT_PROMOTION_MEAN_GAIN,
     DEFAULT_PROMOTION_MIN_GAIN,
     DEFAULT_PROMOTION_REFRESH_TOP_N,
+    FORMAT_IDENTIFIER,
+    FORMAT_VERSION,
+    OBJECTIVES_PER_ARCHIVE,
     ActiveSetManager,
+    ActiveSetSnapshot,
+    ArchiveSnapshot,
+    ArchiveStep,
     GPArchiveStep,
     absolute_pearson_correlation,
     correlation_rejection,
+    decode_expression,
+    encode_expression,
     is_correlated_pairwise,
+    load_active_set_snapshot,
+    load_archive,
     validate_archive_quality_threshold,
     validate_correlation_threshold,
 )
@@ -40,10 +59,23 @@ from .unbound_enumerative_search import (
     UnboundEnumerativeSearch,
     build_unbound_enumerative_search,
 )
+from .runner import (
+    DIAGNOSTIC_COLUMNS,
+    RunnerDiagnosticsRecorder,
+    SearchRunResult,
+    SearchStrategy,
+    run_feature_search,
+    write_summary_json,
+)
 
 __all__ = [
+    "ACTIVE_SET_FORMAT_IDENTIFIER",
+    "ACTIVE_SET_FORMAT_VERSION",
     "ARCHIVE_MINIMIZE",
+    "ARCHIVE_PROXY_OBJECTIVES",
     "DEFAULT_ACTIVE_CORRELATION_THRESHOLD",
+    "DEFAULT_ARCHIVE_CORRELATION_THRESHOLD",
+    "DEFAULT_ARCHIVE_QUALITY_THRESHOLD",
     "DEFAULT_FIRST_PROMOTION_TOP_K",
     "DEFAULT_MAX_DEPTH",
     "DEFAULT_PROMOTION_ADD_K",
@@ -51,8 +83,15 @@ __all__ = [
     "DEFAULT_PROMOTION_MEAN_GAIN",
     "DEFAULT_PROMOTION_MIN_GAIN",
     "DEFAULT_PROMOTION_REFRESH_TOP_N",
+    "DIAGNOSTIC_COLUMNS",
+    "FORMAT_IDENTIFIER",
+    "FORMAT_VERSION",
+    "OBJECTIVES_PER_ARCHIVE",
     "ArchiveProgressTracker",
+    "ArchiveSnapshot",
+    "ArchiveStep",
     "ActiveSetManager",
+    "ActiveSetSnapshot",
     "BoundedExpressionEnumerator",
     "BoundedGrammarEnumerator",
     "CandidateEvaluator",
@@ -61,6 +100,9 @@ __all__ = [
     "GPArchiveStep",
     "MaterializingArchiveSearch",
     "MaterializingGeneticProgramming",
+    "RunnerDiagnosticsRecorder",
+    "SearchRunResult",
+    "SearchStrategy",
     "UnboundEnumerativeSearch",
     "absolute_pearson_correlation",
     "build_enumerative_search",
@@ -71,8 +113,14 @@ __all__ = [
     "collect_evaluation_free_expressions",
     "collect_unique_expressions",
     "correlation_rejection",
+    "decode_expression",
+    "encode_expression",
     "is_correlated_pairwise",
     "iter_bounded_expressions",
+    "load_active_set_snapshot",
+    "load_archive",
+    "run_feature_search",
     "validate_archive_quality_threshold",
     "validate_correlation_threshold",
+    "write_summary_json",
 ]

@@ -7,7 +7,7 @@ from os import PathLike
 
 from geneticengine.grammar.grammar import Grammar
 
-from ..grammar import build_grammar, expr
+from ..features.grammar import build_grammar, expr
 from .enumerative_search import (
     DEFAULT_MAX_DEPTH,
     EnumerationResult,
@@ -86,7 +86,7 @@ def build_unbound_enumerative_search(
     """Build an unbound generator for one batch of enumerated expressions.
 
     The returned expressions can be passed directly to
-    :class:`automatedfe.features.final_evaluation.FinalEvaluator`.
+    :class:`automatedfe.evaluation.final_evaluation.FinalEvaluator`.
     """
 
     if candidate_count <= 0:

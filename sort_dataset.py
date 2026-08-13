@@ -1,6 +1,6 @@
 """Backward-compatible wrapper for the dataset sorting CLI."""
 
-from automatedfe.sorting import (
+from automatedfe.data.sorting import (
     DEFAULT_DATASET_INPUT as DEFAULT_INPUT,
     DEFAULT_DATASET_OUTPUT as DEFAULT_OUTPUT,
     PROJECT_ROOT,

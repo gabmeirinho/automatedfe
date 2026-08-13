@@ -1,34 +1,12 @@
-"""Feature specifications, grammar nodes, materializers, and kernels."""
+"""Feature-domain APIs and compatibility re-exports.
 
-from .archive import (
-    ACTIVE_SET_FORMAT_IDENTIFIER,
-    ACTIVE_SET_FORMAT_VERSION,
-    ARCHIVE_PROXY_OBJECTIVES,
-    DEFAULT_ACTIVE_CORRELATION_THRESHOLD,
-    DEFAULT_ARCHIVE_CORRELATION_THRESHOLD,
-    DEFAULT_ARCHIVE_QUALITY_THRESHOLD,
-    DEFAULT_FIRST_PROMOTION_TOP_K,
-    DEFAULT_PROMOTION_ADD_K,
-    DEFAULT_PROMOTION_INTERVAL,
-    DEFAULT_PROMOTION_MEAN_GAIN,
-    DEFAULT_PROMOTION_MIN_GAIN,
-    DEFAULT_PROMOTION_REFRESH_TOP_N,
-    FORMAT_VERSION,
-    ActiveSetSnapshot,
-    ArchiveSnapshot,
-    ArchiveStep,
-    ActiveSetManager,
-    GPArchiveStep,
-    absolute_pearson_correlation,
-    correlation_rejection,
-    decode_expression,
-    encode_expression,
-    is_correlated_pairwise,
-    load_active_set_snapshot,
-    load_archive,
-    validate_archive_quality_threshold,
-    validate_correlation_threshold,
-)
+Feature specifications, grammar nodes, kernels, feature materialization, and
+the in-progress archive/search compatibility surface belong to this
+namespace. Model evaluation is canonical under :mod:`automatedfe.evaluation`.
+"""
+
+from importlib import import_module
+
 from .feature_materialization import (
     CREATED_AT_COLUMN,
     FEATURE_MMAP_SUFFIX,
@@ -63,26 +41,6 @@ from .feature_spec import (
     Window,
 )
 from .feature_types import TxFeature
-from .final_evaluation import (
-    ARCHIVE_MINIMIZE,
-    AdditiveEvaluationResult,
-    TEST_SPLIT,
-    ArchiveSource,
-    FinalEvaluationResult,
-    FinalEvaluator,
-)
-from .fitness import (
-    ActiveResidualEvaluator,
-    ActiveResidualFitness,
-    FitnessEvaluator,
-    NumericalFitnessError,
-    RandomForestFitness,
-    ResidualEvaluator,
-    ResidualFitness,
-    logit,
-    logit_working_response,
-    sigmoid,
-)
 from .grammar import (
     NON_TERMINALS,
     TERMINALS,
@@ -126,37 +84,94 @@ from .kernels import (
     aggregate,
     sliding_window,
 )
-from .runner import (
-    DIAGNOSTIC_COLUMNS,
-    RunnerDiagnosticsRecorder,
-    SearchRunResult,
-    SearchStrategy,
-    run_feature_search,
-    write_summary_json,
-)
-from .search import (
-    DEFAULT_MAX_DEPTH,
-    BoundedExpressionEnumerator,
-    BoundedGrammarEnumerator,
-    EnumerationResult,
-    MaterializingArchiveSearch,
-    MaterializingGeneticProgramming,
-    UnboundEnumerativeSearch,
-    build_enumerative_search,
-    build_random_search,
-    build_search_algorithm,
-    build_unbound_enumerative_search,
-    canonical_expression_key,
-    collect_evaluation_free_expressions,
-    collect_unique_expressions,
-    iter_bounded_expressions,
-)
+
+_COMPATIBILITY_EXPORTS = {
+    # Archive APIs remain available from ``automatedfe.features`` while the
+    # canonical implementation lives under ``automatedfe.search``.
+    **{
+        name: ("automatedfe.search.archive", name)
+        for name in (
+            "ACTIVE_SET_FORMAT_IDENTIFIER",
+            "ACTIVE_SET_FORMAT_VERSION",
+            "ARCHIVE_PROXY_OBJECTIVES",
+            "DEFAULT_ACTIVE_CORRELATION_THRESHOLD",
+            "DEFAULT_ARCHIVE_CORRELATION_THRESHOLD",
+            "DEFAULT_ARCHIVE_QUALITY_THRESHOLD",
+            "DEFAULT_FIRST_PROMOTION_TOP_K",
+            "DEFAULT_PROMOTION_ADD_K",
+            "DEFAULT_PROMOTION_INTERVAL",
+            "DEFAULT_PROMOTION_MEAN_GAIN",
+            "DEFAULT_PROMOTION_MIN_GAIN",
+            "DEFAULT_PROMOTION_REFRESH_TOP_N",
+            "FORMAT_VERSION",
+            "ActiveSetSnapshot",
+            "ArchiveSnapshot",
+            "ArchiveStep",
+            "ActiveSetManager",
+            "GPArchiveStep",
+            "absolute_pearson_correlation",
+            "correlation_rejection",
+            "decode_expression",
+            "encode_expression",
+            "is_correlated_pairwise",
+            "load_active_set_snapshot",
+            "load_archive",
+            "validate_archive_quality_threshold",
+            "validate_correlation_threshold",
+        )
+    },
+    # Runner exports remain available as compatibility aliases.
+    **{
+        name: ("automatedfe.search.runner", name)
+        for name in (
+            "DIAGNOSTIC_COLUMNS",
+            "RunnerDiagnosticsRecorder",
+            "SearchRunResult",
+            "SearchStrategy",
+            "run_feature_search",
+            "write_summary_json",
+        )
+    },
+    # Search strategy exports are compatibility aliases for the canonical
+    # ``automatedfe.search`` package.
+    **{
+        name: ("automatedfe.search", name)
+        for name in (
+            "DEFAULT_MAX_DEPTH",
+            "BoundedExpressionEnumerator",
+            "BoundedGrammarEnumerator",
+            "EnumerationResult",
+            "MaterializingArchiveSearch",
+            "MaterializingGeneticProgramming",
+            "UnboundEnumerativeSearch",
+            "build_enumerative_search",
+            "build_random_search",
+            "build_search_algorithm",
+            "build_unbound_enumerative_search",
+            "canonical_expression_key",
+            "collect_evaluation_free_expressions",
+            "collect_unique_expressions",
+            "iter_bounded_expressions",
+        )
+    },
+}
+
+
+def __getattr__(name: str):
+    """Resolve moved archive/search APIs without importing search eagerly."""
+
+    target = _COMPATIBILITY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attribute_name = target
+    value = getattr(import_module(module_name), attribute_name)
+    globals()[name] = value
+    return value
 
 __all__ = [
     "ACTIVE_SET_FORMAT_IDENTIFIER",
     "ACTIVE_SET_FORMAT_VERSION",
     "AMOUNT_COLUMN",
-    "ARCHIVE_MINIMIZE",
     "ARCHIVE_PROXY_OBJECTIVES",
     "DEFAULT_ACTIVE_CORRELATION_THRESHOLD",
     "CATEGORY_KINDS",
@@ -185,7 +200,6 @@ __all__ = [
     "ROW_WINDOWS",
     "SUM",
     "TERMINALS",
-    "TEST_SPLIT",
     "TIME_WINDOW",
     "TIME_WINDOWS",
     "TOTAL_HISTORY",
@@ -201,13 +215,9 @@ __all__ = [
     "Aggregation",
     "AmountAgg",
     "ArchiveSnapshot",
-    "ArchiveSource",
     "ArchiveStep",
     "ActiveSetManager",
     "ActiveSetSnapshot",
-    "ActiveResidualEvaluator",
-    "ActiveResidualFitness",
-    "AdditiveEvaluationResult",
     "ArithmeticOp",
     "AvgDailyAmount",
     "AvgDailyAmountCategory",
@@ -223,9 +233,6 @@ __all__ = [
     "DailyAgg",
     "EnumerationResult",
     "FeatureMaterializer",
-    "FinalEvaluationResult",
-    "FinalEvaluator",
-    "FitnessEvaluator",
     "GPArchiveStep",
     "Log",
     "MaterializingArchiveSearch",
@@ -233,14 +240,7 @@ __all__ = [
     "MaxAmount",
     "MeanAmount",
     "Mul",
-    "NumericalFitnessError",
-    "RandomForestFitness",
     "RateAgg",
-    "ResidualEvaluator",
-    "ResidualFitness",
-    "logit",
-    "logit_working_response",
-    "sigmoid",
     "RowWindow",
     "RunnerDiagnosticsRecorder",
     "SafeDiv",

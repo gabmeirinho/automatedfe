@@ -14,8 +14,8 @@ from geneticengine.algorithms.gp.operators.novelty import NoveltyStep
 from geneticengine.algorithms.gp.operators.selection import LexicaseSelection
 from geneticengine.evaluation.budget import SearchBudget
 
-from ..fitness import DEFAULT_N_SPLITS
-from ..grammar import build_grammar
+from ..evaluation.fitness import DEFAULT_N_SPLITS
+from ..features.grammar import build_grammar
 from .search import (
     ArchiveProgressTracker,
     MaterializingArchiveSearch,

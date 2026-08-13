@@ -4,7 +4,8 @@ from types import SimpleNamespace
 import pytest
 
 import scripts.search as search_cli
-from automatedfe.features import MeanAmount, SearchStrategy
+from automatedfe.search import SearchStrategy
+from automatedfe.features import MeanAmount
 
 
 def fake_result(strategy=SearchStrategy.ENUMERATIVE_WITHOUT_ARCHIVE):

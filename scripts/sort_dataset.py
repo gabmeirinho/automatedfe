@@ -6,7 +6,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from automatedfe.sorting import (
+from automatedfe.data.sorting import (
     DEFAULT_DATASET_INPUT,
     DEFAULT_DATASET_OUTPUT,
     sort_dataset,

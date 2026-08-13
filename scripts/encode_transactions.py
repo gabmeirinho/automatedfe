@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from automatedfe.encoding import (
+from automatedfe.data.encoding import (
     DEFAULT_DATASET_INPUT,
     DEFAULT_INPUT,
     DEFAULT_MAPPING_OUTPUT,

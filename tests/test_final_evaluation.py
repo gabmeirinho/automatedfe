@@ -9,17 +9,19 @@ from geneticengine.problems import Fitness, MultiObjectiveProblem
 from geneticengine.solutions.individual import ConcreteIndividual
 from sklearn.ensemble import RandomForestClassifier
 
-from automatedfe.features import (
+from automatedfe.evaluation import (
     AdditiveEvaluationResult,
+    FinalEvaluationResult,
+    FinalEvaluator,
+)
+from automatedfe.features import (
     ArchiveSnapshot,
     ArchiveStep,
     FeatureMaterializer,
-    FinalEvaluator,
     MeanAmount,
     TotalAmount,
     TxFeature,
 )
-from automatedfe.features.final_evaluation import FinalEvaluationResult
 
 LABEL_MAPPING = {
     "status": {"approved": 0, "complete": 1},

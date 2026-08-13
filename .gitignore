@@ -11,7 +11,10 @@ gp_search.csv
 
 PLAN.md
 runs/
+results/
 
 # DuckDB temporary spill files
 /.tmp/
 *.tmp
+
+roadmap/
