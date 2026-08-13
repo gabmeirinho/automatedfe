@@ -3,7 +3,7 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from automatedfe.sorting import sort_transactions
+from automatedfe.data.sorting import sort_transactions
 from tests.conftest import write_transactions_fixture
 
 

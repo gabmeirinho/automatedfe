@@ -319,11 +319,11 @@ def _resolve_mapping(
     """Resolve a mapping argument into a full label-mapping dict."""
 
     if mapping is None:
-        from ..encoding import DEFAULT_MAPPING_OUTPUT, load_label_mapping
+        from ..data.encoding import DEFAULT_MAPPING_OUTPUT, load_label_mapping
 
         return load_label_mapping(DEFAULT_MAPPING_OUTPUT)
     if isinstance(mapping, (str, PathLike)):
-        from ..encoding import load_label_mapping
+        from ..data.encoding import load_label_mapping
 
         return load_label_mapping(Path(mapping))
     return mapping

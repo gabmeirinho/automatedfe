@@ -25,7 +25,7 @@ from typing import Any, TextIO
 
 from geneticengine.evaluation.budget import TimeBudget
 
-from ..transaction_materialization import DEFAULT_MMAP_DIR
+from ..data.transaction_materialization import DEFAULT_MMAP_DIR
 from .feature_materialization import FeatureMaterializer
 from .final_evaluation import (
     AdditiveEvaluationResult,

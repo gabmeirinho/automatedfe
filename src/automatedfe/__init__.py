@@ -6,7 +6,7 @@ code can use ``automatedfe.data`` for the data pipeline,
 search orchestration, and ``automatedfe.cli`` for command-line adapters.
 """
 
-from .encoding import (
+from .data.encoding import (
     CATEGORICAL_COLUMNS,
     DEFAULT_MAPPING_OUTPUT,
     encode_transactions,
@@ -62,8 +62,8 @@ from .fitness import (
     ResidualEvaluator,
     ResidualFitness,
 )
-from .preprocessing import preprocess
-from .sorting import (
+from .data.preprocessing import preprocess
+from .data.sorting import (
     DEFAULT_CARD_TOKENS_INPUT,
     DEFAULT_DATASET_INPUT,
     DEFAULT_DATASET_OUTPUT,
@@ -75,14 +75,14 @@ from .sorting import (
     sort_dataset,
     sort_transactions,
 )
-from .transaction_materialization import (
+from .data.transaction_materialization import (
     DEFAULT_MMAP_DIR,
     column_dtype,
     load_mmapped_columns,
     materialize_transactions,
     read_manifest,
 )
-from .validation import first_sorting_violation
+from .data.validation import first_sorting_violation
 
 __all__ = [
     "ACTIVE_SET_FORMAT_IDENTIFIER",

@@ -11,7 +11,9 @@ import duckdb
 logger = logging.getLogger(__name__)
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# ``sorting.py`` now lives one package deeper than it did before the data
+# namespace migration; keep the defaults rooted at the repository checkout.
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_INPUT = PROJECT_ROOT / "data" / "loan" / "transactions.parquet"
 DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "loan" / "transformed" / "transactions.parquet"
 DEFAULT_CARD_TOKENS_INPUT = PROJECT_ROOT / "data" / "loan" / "card_tokens.parquet"

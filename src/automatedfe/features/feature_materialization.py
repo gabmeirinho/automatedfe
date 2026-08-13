@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 
-from ..transaction_materialization import DEFAULT_MMAP_DIR, load_mmapped_columns
+from ..data.transaction_materialization import DEFAULT_MMAP_DIR, load_mmapped_columns
 from .event_kernels import compute_event_feature
 from .feature_types import TxFeature
 

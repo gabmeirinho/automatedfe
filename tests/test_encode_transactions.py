@@ -3,7 +3,7 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from automatedfe.encoding import (
+from automatedfe.data.encoding import (
     encode_transactions,
     fit_label_mapping,
     load_label_mapping,

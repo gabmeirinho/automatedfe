@@ -6,7 +6,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from automatedfe.preprocessing import (
+from automatedfe.data.preprocessing import (
     DEFAULT_CARD_TOKENS_INPUT,
     DEFAULT_DATASET_INPUT,
     DEFAULT_DATASET_OUTPUT,

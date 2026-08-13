@@ -6,7 +6,7 @@ import argparse
 import math
 from collections.abc import Sequence
 from pathlib import Path
-from automatedfe.encoding import DEFAULT_MAPPING_OUTPUT
+from automatedfe.data.encoding import DEFAULT_MAPPING_OUTPUT
 from automatedfe.features import (
     DEFAULT_MAX_DEPTH,
     SearchStrategy,
@@ -15,8 +15,8 @@ from automatedfe.features import (
     write_summary_json,
 )
 from automatedfe.fitness import DEFAULT_RANDOM_STATE
-from automatedfe.sorting import DEFAULT_DATASET_OUTPUT
-from automatedfe.transaction_materialization import DEFAULT_MMAP_DIR
+from automatedfe.data.sorting import DEFAULT_DATASET_OUTPUT
+from automatedfe.data.transaction_materialization import DEFAULT_MMAP_DIR
 
 
 DEFAULT_DATASET = DEFAULT_DATASET_OUTPUT

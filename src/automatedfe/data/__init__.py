@@ -1,13 +1,11 @@
 """Canonical data-pipeline APIs.
 
-The implementations currently remain in the legacy top-level modules while
-the package is being migrated.  This namespace is the canonical home for
-sorting, validation, encoding, preprocessing, and transaction materialization
-APIs; the re-exports below intentionally avoid maintaining a second
-implementation.
+This namespace owns sorting, validation, encoding, preprocessing, and
+transaction materialization.  The package-level re-exports intentionally
+point at these implementations so callers can use one coherent data API.
 """
 
-from ..encoding import (
+from .encoding import (
     CATEGORICAL_COLUMNS,
     DEFAULT_MAPPING_OUTPUT,
     TRAIN_SPLIT,
@@ -15,8 +13,8 @@ from ..encoding import (
     fit_label_mapping,
     load_label_mapping,
 )
-from ..preprocessing import preprocess
-from ..sorting import (
+from .preprocessing import preprocess
+from .sorting import (
     DEFAULT_CARD_TOKENS_INPUT,
     DEFAULT_DATASET_INPUT,
     DEFAULT_DATASET_OUTPUT,
@@ -28,7 +26,7 @@ from ..sorting import (
     sort_dataset,
     sort_transactions,
 )
-from ..transaction_materialization import (
+from .transaction_materialization import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_MMAP_DIR,
     MANIFEST_FILENAME,
@@ -38,7 +36,7 @@ from ..transaction_materialization import (
     materialize_transactions,
     read_manifest,
 )
-from ..validation import first_sorting_violation
+from .validation import first_sorting_violation
 
 __all__ = [
     "CATEGORICAL_COLUMNS",
