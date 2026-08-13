@@ -242,3 +242,63 @@ def test_force_allows_runner_outputs_to_be_replaced(tmp_path, monkeypatch):
     )
 
     assert csv_path.read_text().startswith("Strategy,CandidateIndex,")
+
+
+def test_active_runner_evaluates_archive_and_active_set_separately(
+    tmp_path,
+    monkeypatch,
+):
+    archive_expression = "archive-expression"
+    active_expression = "active-expression"
+    received = []
+    builder_arguments = {}
+
+    class StubArchive:
+        use_active_set = True
+        archive = [archive_expression]
+        active_individuals = [active_expression]
+
+    class StubSearch:
+        archive_step = StubArchive()
+        archive = archive_step
+        materializer = object()
+        tracker = SimpleNamespace(
+            start_time=0,
+            get_number_evaluations=lambda: 0,
+            recorders=[],
+        )
+        generated_count = 2
+        invalid_count = 0
+        duplicate_count = 0
+        grammar_exhausted = False
+
+        def search(self):
+            return ["history-expression"]
+
+    def build_search(*_args, **kwargs):
+        builder_arguments.update(kwargs)
+        return StubSearch()
+
+    monkeypatch.setattr(runner_module, "build_search_algorithm", build_search)
+    monkeypatch.setattr(
+        runner_module,
+        "_build_final_evaluator",
+        lambda *_args, **_kwargs: _FinalEvaluator(received),
+    )
+
+    result = run_feature_search(
+        "genetic",
+        time_budget_seconds=0.001,
+        dataset_path=tmp_path / "dataset.parquet",
+        mapping=LABEL_MAPPING,
+        mmap_dir=tmp_path / "mmap",
+        use_active_set=True,
+    )
+
+    assert builder_arguments["use_active_set"] is True
+    assert result.expressions == (archive_expression,)
+    assert result.active_set_expressions == (active_expression,)
+    assert received == [archive_expression, active_expression]
+    assert result.archive_final_evaluation is result.final_evaluation
+    assert result.active_set_final_evaluation is not None
+    assert result.active_set_final_metrics == {"roc_auc": 0.75}

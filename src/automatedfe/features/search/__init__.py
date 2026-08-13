@@ -1,5 +1,21 @@
 """Feature-search strategies and their shared evaluated-search lifecycle."""
 
+from ..archive import (
+    DEFAULT_ACTIVE_CORRELATION_THRESHOLD,
+    DEFAULT_FIRST_PROMOTION_TOP_K,
+    DEFAULT_PROMOTION_ADD_K,
+    DEFAULT_PROMOTION_INTERVAL,
+    DEFAULT_PROMOTION_MEAN_GAIN,
+    DEFAULT_PROMOTION_MIN_GAIN,
+    DEFAULT_PROMOTION_REFRESH_TOP_N,
+    ActiveSetManager,
+    GPArchiveStep,
+    absolute_pearson_correlation,
+    correlation_rejection,
+    is_correlated_pairwise,
+    validate_archive_quality_threshold,
+    validate_correlation_threshold,
+)
 from .enumerative_search import (
     BoundedExpressionEnumerator,
     BoundedGrammarEnumerator,
@@ -11,10 +27,6 @@ from .enumerative_search import (
 )
 from .gp import MaterializingGeneticProgramming, build_search_algorithm
 from .random_search import build_random_search
-from .unbound_enumerative_search import (
-    UnboundEnumerativeSearch,
-    build_unbound_enumerative_search,
-)
 from .search import (
     ARCHIVE_MINIMIZE,
     DEFAULT_MAX_DEPTH,
@@ -24,18 +36,33 @@ from .search import (
     MaterializingArchiveSearch,
     canonical_expression_key,
 )
+from .unbound_enumerative_search import (
+    UnboundEnumerativeSearch,
+    build_unbound_enumerative_search,
+)
 
 __all__ = [
     "ARCHIVE_MINIMIZE",
+    "DEFAULT_ACTIVE_CORRELATION_THRESHOLD",
+    "DEFAULT_FIRST_PROMOTION_TOP_K",
     "DEFAULT_MAX_DEPTH",
+    "DEFAULT_PROMOTION_ADD_K",
+    "DEFAULT_PROMOTION_INTERVAL",
+    "DEFAULT_PROMOTION_MEAN_GAIN",
+    "DEFAULT_PROMOTION_MIN_GAIN",
+    "DEFAULT_PROMOTION_REFRESH_TOP_N",
     "ArchiveProgressTracker",
+    "ActiveSetManager",
     "BoundedExpressionEnumerator",
     "BoundedGrammarEnumerator",
     "CandidateEvaluator",
     "CandidateGenerator",
     "EnumerationResult",
+    "GPArchiveStep",
     "MaterializingArchiveSearch",
     "MaterializingGeneticProgramming",
+    "UnboundEnumerativeSearch",
+    "absolute_pearson_correlation",
     "build_enumerative_search",
     "build_random_search",
     "build_search_algorithm",
@@ -43,6 +70,9 @@ __all__ = [
     "canonical_expression_key",
     "collect_evaluation_free_expressions",
     "collect_unique_expressions",
+    "correlation_rejection",
+    "is_correlated_pairwise",
     "iter_bounded_expressions",
-    "UnboundEnumerativeSearch",
+    "validate_archive_quality_threshold",
+    "validate_correlation_threshold",
 ]

@@ -264,8 +264,8 @@ class RandomForestFitness(ChronologicalFoldEvaluator):
         random_state: int = DEFAULT_RANDOM_STATE,
         n_estimators: int = DEFAULT_N_ESTIMATORS,
     ) -> None:
-        if score_metric not in {"accuracy", "roc_auc"}:
-            raise ValueError("score_metric must be 'accuracy' or 'roc_auc'")
+        if score_metric != "roc_auc":
+            raise ValueError("score_metric must be 'roc_auc'")
 
         super().__init__(
             materializer,
@@ -305,16 +305,13 @@ class RandomForestFitness(ChronologicalFoldEvaluator):
             model.fit(x_train, y_train)
             self.last_models.append(model)
 
-            if self.score_metric == "accuracy":
-                score = float(model.score(x_validation, y_validation))
-            else:
-                if np.unique(y_validation).size < 2:
-                    raise ValueError(
-                        "ROC AUC requires both target classes in every validation fold"
-                    )
-                score = float(
-                    roc_auc_score(y_validation, model.predict_proba(x_validation)[:, 1])
+            if np.unique(y_validation).size < 2:
+                raise ValueError(
+                    "ROC AUC requires both target classes in every validation fold"
                 )
+            score = float(
+                roc_auc_score(y_validation, model.predict_proba(x_validation)[:, 1])
+            )
             self.fold_scores.append(score)
             logger.info(
                 "Split %d/%d %s score=%.4f",
@@ -463,7 +460,187 @@ class ResidualEvaluator(ChronologicalFoldEvaluator):
         return self.fold_scores
 
 
+class ActiveResidualEvaluator(ResidualEvaluator):
+    """Score a candidate against a versioned sequential active baseline.
+
+    The active provider is queried by baseline version.  Each active
+    expression is fitted as a shallow residual correction in promotion order;
+    the candidate is then fitted as one more correction.  Consequently a
+    candidate's score is marginal to the complete active sequence rather than
+    another intercept-only score.
+    """
+
+    def __init__(
+        self,
+        materializer: FeatureMaterializer,
+        dataset_path: str | PathLike[str],
+        *,
+        active_provider: Any,
+        baseline_version_provider: Any = None,
+        n_splits: int = DEFAULT_N_SPLITS,
+        score_metric: str = "brier_improvement",
+    ) -> None:
+        if score_metric != "brier_improvement":
+            raise ValueError("Active residual evaluation requires 'brier_improvement'")
+        super().__init__(
+            materializer,
+            dataset_path,
+            n_splits=n_splits,
+            score_metric=score_metric,
+        )
+        self.active_provider = active_provider
+        self.baseline_version_provider = baseline_version_provider
+        self._baseline_cache: dict[int, tuple[tuple[np.ndarray, np.ndarray, float], ...]] = {}
+
+    @property
+    def baseline_version(self) -> int:
+        provider = self.baseline_version_provider
+        if provider is None:
+            provider = self.active_provider
+        if callable(provider):
+            return int(provider())
+        return int(getattr(provider, "baseline_version", 0))
+
+    def invalidate_baseline_cache(self) -> None:
+        """Drop cached additive-baseline predictions after a provider update."""
+
+        self._baseline_cache.clear()
+
+    def _active_individuals(self) -> list[Any]:
+        provider = self.active_provider
+        if callable(provider):
+            active = provider()
+        else:
+            active = getattr(provider, "active_individuals", provider)
+        return list(active or ())
+
+    @staticmethod
+    def _phenotype(individual: Any) -> Any:
+        get_phenotype = getattr(individual, "get_phenotype", None)
+        return get_phenotype() if callable(get_phenotype) else individual
+
+    def _fit_correction(
+        self,
+        x_train: np.ndarray,
+        x_validation: np.ndarray,
+        labels_train: np.ndarray,
+        training_scores: np.ndarray,
+        validation_scores: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, DecisionTreeRegressor | None]:
+        imputer = SimpleImputer(strategy="constant", fill_value=0.0)
+        x_train = imputer.fit_transform(np.asarray(x_train).reshape(-1, 1))
+        x_validation = imputer.transform(np.asarray(x_validation).reshape(-1, 1))
+        training_residuals, training_weights = _logit_working_response(
+            labels_train,
+            training_scores,
+        )
+        if np.std(x_train[:, 0]) < 1e-8:
+            return training_scores, validation_scores, None
+        model = DecisionTreeRegressor(**RESIDUAL_TREE_PARAMS)
+        model.fit(x_train, training_residuals, sample_weight=training_weights)
+        correction_train = model.predict(x_train)
+        correction_validation = model.predict(x_validation)
+        return (
+            training_scores + RESIDUAL_SHRINKAGE * correction_train,
+            validation_scores + RESIDUAL_SHRINKAGE * correction_validation,
+            model,
+        )
+
+    def _build_baseline(self) -> tuple[tuple[np.ndarray, np.ndarray, float], ...]:
+        active = self._active_individuals()
+        result: list[tuple[np.ndarray, np.ndarray, float]] = []
+        for fit_indices, validation_indices in self.cv_splits:
+            y_train = self.labels[fit_indices]
+            y_validation = self.labels[validation_indices]
+            intercept = float(
+                np.clip(np.mean(y_train), RESIDUAL_EPSILON, 1.0 - RESIDUAL_EPSILON)
+            )
+            intercept_score = _logit(intercept)
+            training_scores = np.full(y_train.shape, intercept_score, dtype=np.float64)
+            validation_scores = np.full(y_validation.shape, intercept_score, dtype=np.float64)
+            for individual in active:
+                values = self._values_for(self._phenotype(individual))
+                training_scores, validation_scores, _model = self._fit_correction(
+                    values[fit_indices],
+                    values[validation_indices],
+                    y_train,
+                    training_scores,
+                    validation_scores,
+                )
+            predictions = _sigmoid(validation_scores)
+            baseline_brier = float(brier_score_loss(y_validation, predictions))
+            result.append((training_scores, validation_scores, baseline_brier))
+        return tuple(result)
+
+    def _baseline(self) -> tuple[tuple[np.ndarray, np.ndarray, float], ...]:
+        version = self.baseline_version
+        cached = self._baseline_cache.get(version)
+        if cached is None:
+            cached = self._build_baseline()
+            self._baseline_cache[version] = cached
+        return cached
+
+    def _score_folds(self, values: np.ndarray, individual: Any) -> list[float]:
+        values = np.asarray(values).reshape(-1)
+        self.fold_scores = []
+        self.fold_baselines = []
+        self.fold_baseline_brier_scores = []
+        self.fold_corrected_brier_scores = []
+        self.last_models = []
+        self.last_training_residuals = []
+        self.last_training_weights = []
+        self.last_validation_predictions = []
+
+        for baseline, (fit_indices, validation_indices) in zip(
+            self._baseline(), self.cv_splits
+        ):
+            training_scores, validation_scores, baseline_brier = baseline
+            y_train = self.labels[fit_indices]
+            y_validation = self.labels[validation_indices]
+            x_train = values[fit_indices]
+            x_validation = values[validation_indices]
+            corrected_training_scores, corrected_validation_scores, model = self._fit_correction(
+                x_train,
+                x_validation,
+                y_train,
+                training_scores.copy(),
+                validation_scores.copy(),
+            )
+            corrected_predictions = _sigmoid(corrected_validation_scores)
+            corrected_brier = float(
+                brier_score_loss(y_validation, corrected_predictions)
+            )
+            improvement = (
+                0.0
+                if baseline_brier <= 1e-12
+                else 1.0 - corrected_brier / baseline_brier
+            )
+            residuals, weights = _logit_working_response(
+                y_train,
+                training_scores,
+            )
+            self.last_models.append(model)
+            self.last_training_residuals.append(residuals.copy())
+            self.last_training_weights.append(weights.copy())
+            self.last_validation_predictions.append(corrected_predictions.copy())
+            self.fold_baselines.append(float(np.mean(_sigmoid(validation_scores))))
+            self.fold_baseline_brier_scores.append(baseline_brier)
+            self.fold_corrected_brier_scores.append(corrected_brier)
+            self.fold_scores.append(float(improvement))
+            logger.info(
+                "Split %d/%d %s active Brier improvement=%.6f",
+                len(self.fold_scores),
+                len(self.cv_splits),
+                individual,
+                improvement,
+            )
+
+        self.last_model = self.last_models[-1]
+        return self.fold_scores
+
+
 ResidualFitness = ResidualEvaluator
+ActiveResidualFitness = ActiveResidualEvaluator
 FitnessEvaluator = RandomForestFitness
 
 __all__ = [
@@ -476,6 +653,8 @@ __all__ = [
     "DEFAULT_RANDOM_STATE",
     "FitnessEvaluator",
     "RandomForestFitness",
+    "ActiveResidualEvaluator",
+    "ActiveResidualFitness",
     "MIN_LOGIT_WEIGHT",
     "NumericalFitnessError",
     "RESIDUAL_EPSILON",

@@ -19,7 +19,7 @@ def fake_result(strategy=SearchStrategy.ENUMERATIVE_WITHOUT_ARCHIVE):
         final_evaluation_duration_seconds=0.5,
         grammar_exhausted=False,
         objectives=None,
-        final_metrics={"accuracy": 0.75, "roc_auc": 0.8},
+        final_metrics={"roc_auc": 0.8},
     )
 
 
@@ -65,7 +65,7 @@ def test_cli_dispatches_evaluation_free_strategy_and_writes_summary(
         "duplicates": 0,
     }
     assert summary["selected_feature_count"] == 2
-    assert summary["final_metrics"] == {"accuracy": 0.75, "roc_auc": 0.8}
+    assert summary["final_metrics"] == {"roc_auc": 0.8}
     assert "objectives" not in summary
     assert "predictions" not in summary
     assert "model" not in summary
@@ -99,6 +99,32 @@ def test_cli_defaults_to_residual_brier_improvement(tmp_path, monkeypatch):
     ) == 0
 
     assert calls[0][1]["score_metric"] == "brier_improvement"
+
+
+def test_cli_forwards_active_set_for_genetic_search(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(strategy, **kwargs):
+        calls.append((strategy, kwargs))
+        return fake_result(strategy)
+
+    monkeypatch.setattr(search_cli, "run_feature_search", fake_run)
+
+    assert search_cli.main(
+        [
+            "--strategy",
+            "genetic",
+            "--time-budget",
+            "1",
+            "--use-active-set",
+            "--dataset",
+            str(tmp_path / "dataset.parquet"),
+            "--mapping",
+            str(tmp_path / "mapping.json"),
+        ]
+    ) == 0
+
+    assert calls[0][1]["use_active_set"] is True
 
 
 @pytest.mark.parametrize(
