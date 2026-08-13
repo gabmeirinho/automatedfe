@@ -8,7 +8,7 @@ from geneticengine.evaluation.sequential import SequentialEvaluator
 from geneticengine.problems import MultiObjectiveProblem
 from geneticengine.solutions.individual import ConcreteIndividual
 
-from automatedfe.features.archive import (
+from automatedfe.search.archive import (
     ActiveSetManager,
     absolute_pearson_correlation,
     correlation_rejection,

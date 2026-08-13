@@ -7,7 +7,7 @@ from os import PathLike
 
 from geneticengine.grammar.grammar import Grammar
 
-from ..grammar import build_grammar, expr
+from ..features.grammar import build_grammar, expr
 from .enumerative_search import (
     DEFAULT_MAX_DEPTH,
     EnumerationResult,

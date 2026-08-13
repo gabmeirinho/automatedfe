@@ -4,9 +4,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from automatedfe.features.archive import ActiveSetManager, ArchiveStep
+from automatedfe.search.archive import ActiveSetManager, ArchiveStep
 from geneticengine.evaluation.sequential import SequentialEvaluator
-from automatedfe.features.search.search import CandidateEvaluator, MaterializingArchiveSearch
+from automatedfe.search.search import CandidateEvaluator, MaterializingArchiveSearch
 from geneticengine.problems import Fitness, MultiObjectiveProblem
 from geneticengine.solutions.individual import ConcreteIndividual
 

@@ -32,7 +32,7 @@ from geneticengine.representations.tree.initializations import MaxDepthDecider
 from geneticengine.representations.tree.treebased import TreeBasedRepresentation
 from geneticengine.solutions.individual import Individual, PhenotypicIndividual
 
-from ..archive import (
+from .archive import (
     ActiveSetManager,
     ArchiveStep,
     absolute_pearson_correlation,
@@ -42,16 +42,16 @@ from ..archive import (
     validate_archive_quality_threshold,
     validate_correlation_threshold,
 )
-from ..feature_materialization import FeatureMaterializer
-from ..feature_types import TxFeature
-from ...evaluation.fitness import (
+from ..features.feature_materialization import FeatureMaterializer
+from ..features.feature_types import TxFeature
+from ..evaluation.fitness import (
     DEFAULT_N_SPLITS,
     ActiveResidualEvaluator,
     NumericalFitnessError,
     RandomForestFitness,
     ResidualEvaluator,
 )
-from ..grammar import build_grammar, collect_features, expr
+from ..features.grammar import build_grammar, collect_features, expr
 
 logger = logging.getLogger(__name__)
 

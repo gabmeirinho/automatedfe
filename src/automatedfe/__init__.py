@@ -13,7 +13,7 @@ from .data.encoding import (
     fit_label_mapping,
     load_label_mapping,
 )
-from .features.archive import (
+from .search.archive import (
     ACTIVE_SET_FORMAT_IDENTIFIER,
     ACTIVE_SET_FORMAT_VERSION,
     ARCHIVE_PROXY_OBJECTIVES,

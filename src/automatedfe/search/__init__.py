@@ -1,11 +1,12 @@
-"""Canonical feature-search and search-orchestration APIs.
+"""Canonical archive, feature-search, and search-orchestration APIs.
 
-The search implementation still lives under ``automatedfe.features`` during
-the namespace migration.  These re-exports define the destination package
-without duplicating archive, strategy, or runner implementations.
+Archive state and candidate-search strategies live in this package. The
+high-level runner remains in ``automatedfe.features.runner`` until P2-C3, but
+is re-exported here to keep the destination namespace stable during the
+migration.
 """
 
-from ..features.archive import (
+from .archive import (
     ACTIVE_SET_FORMAT_IDENTIFIER,
     ACTIVE_SET_FORMAT_VERSION,
     ARCHIVE_PROXY_OBJECTIVES,
@@ -36,6 +37,30 @@ from ..features.archive import (
     validate_archive_quality_threshold,
     validate_correlation_threshold,
 )
+from .enumerative_search import (
+    BoundedExpressionEnumerator,
+    BoundedGrammarEnumerator,
+    EnumerationResult,
+    build_enumerative_search,
+    collect_evaluation_free_expressions,
+    collect_unique_expressions,
+    iter_bounded_expressions,
+)
+from .gp import MaterializingGeneticProgramming, build_search_algorithm
+from .random_search import build_random_search
+from .search import (
+    ARCHIVE_MINIMIZE,
+    DEFAULT_MAX_DEPTH,
+    ArchiveProgressTracker,
+    CandidateEvaluator,
+    CandidateGenerator,
+    MaterializingArchiveSearch,
+    canonical_expression_key,
+)
+from .unbound_enumerative_search import (
+    UnboundEnumerativeSearch,
+    build_unbound_enumerative_search,
+)
 from ..features.runner import (
     DIAGNOSTIC_COLUMNS,
     RunnerDiagnosticsRecorder,
@@ -43,27 +68,6 @@ from ..features.runner import (
     SearchStrategy,
     run_feature_search,
     write_summary_json,
-)
-from ..features.search import (
-    ARCHIVE_MINIMIZE,
-    DEFAULT_MAX_DEPTH,
-    ArchiveProgressTracker,
-    BoundedExpressionEnumerator,
-    BoundedGrammarEnumerator,
-    CandidateEvaluator,
-    CandidateGenerator,
-    EnumerationResult,
-    MaterializingArchiveSearch,
-    MaterializingGeneticProgramming,
-    UnboundEnumerativeSearch,
-    build_enumerative_search,
-    build_random_search,
-    build_search_algorithm,
-    build_unbound_enumerative_search,
-    canonical_expression_key,
-    collect_evaluation_free_expressions,
-    collect_unique_expressions,
-    iter_bounded_expressions,
 )
 
 __all__ = [

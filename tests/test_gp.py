@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from geneticengine.evaluation.budget import EvaluationBudget
 
-import automatedfe.features.search.search as shared_module
+import automatedfe.search.search as shared_module
 from automatedfe.features import (
     ArchiveStep,
     MaterializingGeneticProgramming,

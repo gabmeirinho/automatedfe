@@ -54,5 +54,18 @@ def test_evaluation_implementations_have_canonical_module_paths():
     )
 
 
+def test_search_implementations_have_canonical_module_paths():
+    assert automatedfe.search.ArchiveSnapshot.__module__ == (
+        "automatedfe.search.archive"
+    )
+    assert automatedfe.search.MaterializingArchiveSearch.__module__ == (
+        "automatedfe.search.search"
+    )
+    assert automatedfe.search.build_random_search.__module__ == (
+        "automatedfe.search.random_search"
+    )
+    assert automatedfe.features.ArchiveSnapshot is automatedfe.search.ArchiveSnapshot
+
+
 def test_cli_namespace_has_no_import_side_effect_exports_yet():
     assert automatedfe.cli.__all__ == []

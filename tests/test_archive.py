@@ -9,7 +9,7 @@ from geneticengine.evaluation.sequential import SequentialEvaluator
 from geneticengine.problems import Fitness, MultiObjectiveProblem
 from geneticengine.solutions.individual import ConcreteIndividual
 
-import automatedfe.features.archive as archive_module
+import automatedfe.search.archive as archive_module
 from automatedfe.features import (
     Add,
     AvgDailyAmount,
@@ -30,7 +30,7 @@ from automatedfe.features import (
     TotalAmount,
     build_grammar,
 )
-from automatedfe.features.archive import (
+from automatedfe.search.archive import (
     ActiveSetManager,
     ArchiveStep,
     decode_expression,

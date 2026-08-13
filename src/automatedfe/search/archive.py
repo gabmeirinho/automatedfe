@@ -23,8 +23,8 @@ from geneticengine.random.sources import RandomSource
 from geneticengine.representations.api import Representation
 from geneticengine.solutions.individual import PhenotypicIndividual
 
-from .feature_schema import code_lists_from_mapping
-from .grammar import NON_TERMINALS, TERMINALS, expr
+from ..features.feature_schema import code_lists_from_mapping
+from ..features.grammar import NON_TERMINALS, TERMINALS, expr
 
 logger = logging.getLogger(__name__)
 
@@ -828,7 +828,7 @@ class ArchiveStep(GeneticStep):
         # Keep archive identity structural for grammar expressions.  The
         # helper's compatibility fallback preserves support for the small
         # non-grammar expression objects accepted by the historical API.
-        from .search.search import canonical_expression_key
+        from .search import canonical_expression_key
 
         return canonical_expression_key(individual.get_phenotype())
 

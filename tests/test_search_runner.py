@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import automatedfe.features.runner as runner_module
-import automatedfe.features.search.search as shared_search_module
+import automatedfe.search.search as shared_search_module
 from automatedfe.features import (
     DIAGNOSTIC_COLUMNS,
     SearchStrategy,

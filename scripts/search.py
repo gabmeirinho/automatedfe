@@ -7,7 +7,7 @@ import math
 from collections.abc import Sequence
 from pathlib import Path
 from automatedfe.data.encoding import DEFAULT_MAPPING_OUTPUT
-from automatedfe.features import (
+from automatedfe.search import (
     DEFAULT_MAX_DEPTH,
     SearchStrategy,
     SearchRunResult,

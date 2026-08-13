@@ -34,11 +34,11 @@ from ..evaluation.final_evaluation import (
 )
 from ..evaluation.fitness import DEFAULT_N_SPLITS, DEFAULT_RANDOM_STATE
 from .grammar import collect_features, expr
-from .search.search import canonical_expression_key
-from .search.enumerative_search import build_enumerative_search
-from .search.gp import build_search_algorithm
-from .search.random_search import build_random_search
-from .search.unbound_enumerative_search import build_unbound_enumerative_search
+from ..search.search import canonical_expression_key
+from ..search.enumerative_search import build_enumerative_search
+from ..search.gp import build_search_algorithm
+from ..search.random_search import build_random_search
+from ..search.unbound_enumerative_search import build_unbound_enumerative_search
 
 
 class SearchStrategy(str, Enum):

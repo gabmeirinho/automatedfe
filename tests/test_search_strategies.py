@@ -3,10 +3,10 @@ from itertools import islice
 import pytest
 from geneticengine.evaluation.budget import EvaluationBudget
 
-import automatedfe.features.search.enumerative_search as enumerative_module
-import automatedfe.features.search.random_search as random_module
-import automatedfe.features.search.search as shared_module
-import automatedfe.features.search.unbound_enumerative_search as unbound_module
+import automatedfe.search.enumerative_search as enumerative_module
+import automatedfe.search.random_search as random_module
+import automatedfe.search.search as shared_module
+import automatedfe.search.unbound_enumerative_search as unbound_module
 from automatedfe.features import (
     Add,
     CountCategory,
