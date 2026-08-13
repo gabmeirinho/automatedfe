@@ -1,11 +1,11 @@
 """Canonical model-evaluation APIs.
 
-Evaluation implementations are still located in their pre-migration modules
-until the evaluation move in phase 2.  This package exposes the intended
-evaluation boundary without duplicating those implementations.
+Fitness and held-out evaluation implementations live in this package. Feature
+construction remains under :mod:`automatedfe.features`; search orchestration
+consumes these evaluators through this canonical boundary.
 """
 
-from ..features.final_evaluation import (
+from .final_evaluation import (
     ARCHIVE_MINIMIZE,
     AdditiveEvaluationResult,
     ArchiveSource,
@@ -13,7 +13,7 @@ from ..features.final_evaluation import (
     FinalEvaluator,
     TEST_SPLIT,
 )
-from ..features.fitness import (
+from .fitness import (
     DATASET_MERCHANT_COLUMN,
     DATASET_SPLIT_COLUMN,
     DATASET_TARGET_COLUMN,

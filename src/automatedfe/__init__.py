@@ -13,7 +13,7 @@ from .data.encoding import (
     fit_label_mapping,
     load_label_mapping,
 )
-from .features.archive import (
+from .search.archive import (
     ACTIVE_SET_FORMAT_IDENTIFIER,
     ACTIVE_SET_FORMAT_VERSION,
     ARCHIVE_PROXY_OBJECTIVES,
@@ -45,7 +45,7 @@ from .features.feature_materialization import (
     materialize_feature,
     materialize_individual,
 )
-from .features.runner import (
+from .search.runner import (
     DIAGNOSTIC_COLUMNS,
     RunnerDiagnosticsRecorder,
     SearchRunResult,
@@ -53,7 +53,7 @@ from .features.runner import (
     run_feature_search,
     write_summary_json,
 )
-from .fitness import (
+from .evaluation import (
     ActiveResidualEvaluator,
     ActiveResidualFitness,
     FitnessEvaluator,

@@ -1,6 +1,6 @@
-"""Public fitness-evaluation API."""
+"""Compatibility facade for the canonical fitness-evaluation API."""
 
-from .features.fitness import (
+from .evaluation.fitness import (
     DATASET_MERCHANT_COLUMN,
     DATASET_SPLIT_COLUMN,
     DATASET_TARGET_COLUMN,

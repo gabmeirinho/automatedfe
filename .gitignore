@@ -1,15 +1,10 @@
 /data
 
-test.py
-
 __pycache__/
 *.py[cod]
 
-gp_search.csv
-
 .agents/
 
-PLAN.md
 runs/
 results/
 
