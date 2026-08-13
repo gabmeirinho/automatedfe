@@ -1,4 +1,10 @@
-"""Reusable dataset sorting, validation, and encoding functions."""
+"""Compatibility facade for the automated feature-engineering package.
+
+The package-level exports remain stable during the namespace migration.  New
+code can use ``automatedfe.data`` for the data pipeline,
+``automatedfe.evaluation`` for model evaluation, ``automatedfe.search`` for
+search orchestration, and ``automatedfe.cli`` for command-line adapters.
+"""
 
 from .encoding import (
     CATEGORICAL_COLUMNS,

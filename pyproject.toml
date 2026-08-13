@@ -28,6 +28,8 @@ pythonpath = ["src", "."]
 testpaths = ["tests"]
 
 [tool.hatch.build.targets.wheel]
+# Include the domain subpackages recursively as they are added under this
+# package root.
 packages = ["src/automatedfe"]
 
 [tool.uv.sources]

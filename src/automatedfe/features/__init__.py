@@ -1,4 +1,10 @@
-"""Feature specifications, grammar nodes, materializers, and kernels."""
+"""Feature-domain APIs and compatibility re-exports.
+
+Feature specifications, grammar nodes, kernels, and feature materialization
+are the long-term responsibility of this namespace.  Archive, evaluation,
+and search symbols remain re-exported here for compatibility until their
+canonical namespaces finish migrating in phase 2.
+"""
 
 from .archive import (
     ACTIVE_SET_FORMAT_IDENTIFIER,
