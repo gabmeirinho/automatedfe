@@ -3,10 +3,10 @@ import sys
 
 import duckdb
 
-from scripts.check_null_percentages import DEFAULT_INPUT_DIR
+from automatedfe.cli.check_null_percentages import DEFAULT_INPUT_DIR
 
 
-SCRIPT = "scripts/check_null_percentages.py"
+COMMAND = ["-m", "automatedfe.cli", "validate", "null-percentages"]
 
 
 def test_checker_uses_transformed_datasets_by_default(tmp_path):
@@ -26,7 +26,7 @@ def test_checker_uses_transformed_datasets_by_default(tmp_path):
     )
 
     result = subprocess.run(
-        [sys.executable, SCRIPT, "--input-dir", str(transformed_dir)],
+        [sys.executable, *COMMAND, "--input-dir", str(transformed_dir)],
         check=True,
         capture_output=True,
         text=True,
@@ -39,4 +39,3 @@ def test_checker_uses_transformed_datasets_by_default(tmp_path):
         "transactions.parquet\tdocument_type\t2\t1\t50.000000%",
     ]
     assert DEFAULT_INPUT_DIR.name == "transformed"
-

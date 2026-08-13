@@ -4,7 +4,12 @@ import sys
 import duckdb
 
 
-SCRIPT = "scripts/check_nulls_transactions.py"
+COMMAND = [
+    "-m",
+    "automatedfe.cli",
+    "validate",
+    "nulls-transactions",
+]
 
 
 def test_checker_reports_null_counts_for_both_datasets(tmp_path):
@@ -37,7 +42,7 @@ def test_checker_reports_null_counts_for_both_datasets(tmp_path):
     result = subprocess.run(
         [
             sys.executable,
-            SCRIPT,
+            *COMMAND,
             "--transactions",
             str(transactions_path),
             "--transformed",

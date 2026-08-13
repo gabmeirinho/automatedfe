@@ -70,3 +70,4 @@ if (( failures > 0 )); then
 fi
 
 echo "All seed runs finished successfully"
+

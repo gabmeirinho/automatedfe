@@ -4,7 +4,12 @@ import sys
 import duckdb
 
 
-SCRIPT = "scripts/check_merchants_code_mismatches.py"
+COMMAND = [
+    "-m",
+    "automatedfe.cli",
+    "validate",
+    "merchants-code-mismatches",
+]
 
 
 def test_checker_reports_value_and_null_mismatches(tmp_path):
@@ -41,7 +46,7 @@ def test_checker_reports_value_and_null_mismatches(tmp_path):
     result = subprocess.run(
         [
             sys.executable,
-            SCRIPT,
+            *COMMAND,
             "--transactions",
             str(transactions_path),
             "--merchants",
@@ -63,7 +68,7 @@ def test_checker_reports_value_and_null_mismatches(tmp_path):
     summary_result = subprocess.run(
         [
             sys.executable,
-            SCRIPT,
+            *COMMAND,
             "--transactions",
             str(transactions_path),
             "--merchants",
