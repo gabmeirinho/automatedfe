@@ -48,8 +48,14 @@ def objectives_are_finite(objectives: Sequence[float]) -> bool:
     return len(objectives) > 0 and bool(np.all(np.isfinite(objectives)))
 
 
-def _sigmoid(scores: np.ndarray) -> np.ndarray:
-    """Convert log-odds to probabilities without overflowing ``exp``."""
+def sigmoid(scores: np.ndarray) -> np.ndarray:
+    """Convert log-odds to probabilities without overflowing ``exp``.
+
+    The clipping bounds come from the residual evaluator epsilon, so this is
+    shared by search-time and final additive residual evaluation.  Keeping the
+    clipping in one place prevents the two paths from diverging for very large
+    logit values.
+    """
 
     lower = np.log(RESIDUAL_EPSILON / (1.0 - RESIDUAL_EPSILON))
     upper = -lower
@@ -57,38 +63,23 @@ def _sigmoid(scores: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-bounded))
 
 
-def sigmoid(scores: np.ndarray) -> np.ndarray:
-    """Convert log-odds to probabilities using the residual evaluator bounds.
+def logit(probability: float) -> float:
+    """Convert a probability to a safely clipped log-odds value."""
 
-    This public spelling is shared by search-time and final additive residual
-    evaluation.  Keeping the clipping in one place prevents the two paths
-    from diverging for very large logit values.
-    """
-
-    return _sigmoid(scores)
-
-
-def _logit(probability: float) -> float:
     probability = float(
         np.clip(probability, RESIDUAL_EPSILON, 1.0 - RESIDUAL_EPSILON)
     )
     return float(np.log(probability / (1.0 - probability)))
 
 
-def logit(probability: float) -> float:
-    """Convert a probability to a safely clipped log-odds value."""
-
-    return _logit(probability)
-
-
-def _logit_working_response(
+def logit_working_response(
     labels: np.ndarray,
     scores: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return Newton working responses and binomial curvature weights."""
 
     probabilities = np.clip(
-        _sigmoid(scores),
+        sigmoid(scores),
         RESIDUAL_EPSILON,
         1.0 - RESIDUAL_EPSILON,
     )
@@ -99,15 +90,6 @@ def _logit_working_response(
     )
     responses = (np.asarray(labels, dtype=np.float64) - probabilities) / weights
     return responses, weights
-
-
-def logit_working_response(
-    labels: np.ndarray,
-    scores: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return the residual-tree response and curvature weights."""
-
-    return _logit_working_response(labels, scores)
 
 
 def _load_ordered_events(
@@ -431,11 +413,11 @@ class ResidualEvaluator(ChronologicalFoldEvaluator):
                     1.0 - RESIDUAL_EPSILON,
                 )
             )
-            baseline_score = _logit(baseline)
+            baseline_score = logit(baseline)
             training_scores = np.full(y_train.shape, baseline_score)
             validation_scores = np.full(y_validation.shape, baseline_score)
-            baseline_predictions = _sigmoid(validation_scores)
-            training_residuals, training_weights = _logit_working_response(
+            baseline_predictions = sigmoid(validation_scores)
+            training_residuals, training_weights = logit_working_response(
                 y_train,
                 training_scores,
             )
@@ -451,7 +433,7 @@ class ResidualEvaluator(ChronologicalFoldEvaluator):
                     sample_weight=training_weights,
                 )
                 correction = model.predict(x_validation)
-                corrected_predictions = _sigmoid(
+                corrected_predictions = sigmoid(
                     validation_scores + RESIDUAL_SHRINKAGE * correction
                 )
             baseline_brier = float(
@@ -556,7 +538,7 @@ class ActiveResidualEvaluator(ResidualEvaluator):
         imputer = SimpleImputer(strategy="constant", fill_value=0.0)
         x_train = imputer.fit_transform(np.asarray(x_train).reshape(-1, 1))
         x_validation = imputer.transform(np.asarray(x_validation).reshape(-1, 1))
-        training_residuals, training_weights = _logit_working_response(
+        training_residuals, training_weights = logit_working_response(
             labels_train,
             training_scores,
         )
@@ -581,7 +563,7 @@ class ActiveResidualEvaluator(ResidualEvaluator):
             intercept = float(
                 np.clip(np.mean(y_train), RESIDUAL_EPSILON, 1.0 - RESIDUAL_EPSILON)
             )
-            intercept_score = _logit(intercept)
+            intercept_score = logit(intercept)
             training_scores = np.full(y_train.shape, intercept_score, dtype=np.float64)
             validation_scores = np.full(y_validation.shape, intercept_score, dtype=np.float64)
             for individual in active:
@@ -593,7 +575,7 @@ class ActiveResidualEvaluator(ResidualEvaluator):
                     training_scores,
                     validation_scores,
                 )
-            predictions = _sigmoid(validation_scores)
+            predictions = sigmoid(validation_scores)
             baseline_brier = float(brier_score_loss(y_validation, predictions))
             result.append((training_scores, validation_scores, baseline_brier))
         return tuple(result)
@@ -632,7 +614,7 @@ class ActiveResidualEvaluator(ResidualEvaluator):
                 training_scores.copy(),
                 validation_scores.copy(),
             )
-            corrected_predictions = _sigmoid(corrected_validation_scores)
+            corrected_predictions = sigmoid(corrected_validation_scores)
             corrected_brier = float(
                 brier_score_loss(y_validation, corrected_predictions)
             )
@@ -641,7 +623,7 @@ class ActiveResidualEvaluator(ResidualEvaluator):
                 if baseline_brier <= 1e-12
                 else 1.0 - corrected_brier / baseline_brier
             )
-            residuals, weights = _logit_working_response(
+            residuals, weights = logit_working_response(
                 y_train,
                 training_scores,
             )
@@ -649,7 +631,7 @@ class ActiveResidualEvaluator(ResidualEvaluator):
             self.last_training_residuals.append(residuals.copy())
             self.last_training_weights.append(weights.copy())
             self.last_validation_predictions.append(corrected_predictions.copy())
-            self.fold_baselines.append(float(np.mean(_sigmoid(validation_scores))))
+            self.fold_baselines.append(float(np.mean(sigmoid(validation_scores))))
             self.fold_baseline_brier_scores.append(baseline_brier)
             self.fold_corrected_brier_scores.append(corrected_brier)
             self.fold_scores.append(float(improvement))
