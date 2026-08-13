@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
 
 import duckdb
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from automatedfe.data.sorting import PROJECT_ROOT
+
+
 DEFAULT_TRANSACTIONS_INPUT = PROJECT_ROOT / "data" / "loan" / "transactions.parquet"
 DEFAULT_TRANSFORMED_INPUT = (
     PROJECT_ROOT / "data" / "loan" / "transformed" / "transactions.parquet"
@@ -53,7 +56,7 @@ def format_statistic(total_rows: int, null_count: int) -> tuple[str, str, str]:
     return str(total_rows), str(null_count), f"{null_percent:.6f}%"
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--transactions",
@@ -67,7 +70,7 @@ def main() -> None:
         default=DEFAULT_TRANSFORMED_INPUT,
         help=f"Transformed transactions parquet (default: {DEFAULT_TRANSFORMED_INPUT})",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     for path, label in (
         (args.transactions, "Transactions"),
@@ -110,7 +113,8 @@ def main() -> None:
             print(f"{column}\t{'\t'.join(original)}\t{'\t'.join(transformed)}")
     finally:
         connection.close()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

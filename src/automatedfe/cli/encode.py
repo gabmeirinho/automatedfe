@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
 
 from automatedfe.data.encoding import (
@@ -15,7 +16,7 @@ from automatedfe.data.encoding import (
 )
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -71,7 +72,7 @@ def main() -> None:
         help="Replace the output file if it already exists",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.command == "fit":
         fit_label_mapping(
             args.input,
@@ -88,7 +89,8 @@ def main() -> None:
             force=args.force,
         )
         print(f"Encoded transactions written to {args.output.resolve()}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import scripts.search as search_cli
+import automatedfe.cli.search as search_cli
 from automatedfe.search import SearchStrategy
 from automatedfe.features import MeanAmount
 

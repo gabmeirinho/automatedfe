@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run a single feature-search task (one seed) through scripts/search.py.
+# Run a single feature-search task (one seed) through the unified CLI.
 #
 # All settings can be overridden via environment variables; edit the defaults
 # below or use one of the strategy presets in this directory. Intended to be
@@ -106,4 +106,5 @@ fi
 
 ARGS+=(--summary "${RUN_DIR}/summary.json")
 
-uv run python -u scripts/search.py "${ARGS[@]}"
+uv run automatedfe search "${ARGS[@]}"
+

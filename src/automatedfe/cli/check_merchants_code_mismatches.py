@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
 
 import duckdb
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from automatedfe.data.sorting import PROJECT_ROOT
+
+
 DEFAULT_TRANSACTIONS_INPUT = PROJECT_ROOT / "data" / "loan" / "transactions.parquet"
 DEFAULT_MERCHANTS_INPUT = PROJECT_ROOT / "data" / "loan" / "merchants.parquet"
 
@@ -24,7 +27,7 @@ def columns(connection: duckdb.DuckDBPyConnection, input_path: Path) -> set[str]
     }
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--transactions",
@@ -43,7 +46,7 @@ def main() -> None:
         action="store_true",
         help="Print one summarized row per mismatching merchant",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     for path, label in (
         (args.transactions, "Transactions"),
@@ -133,7 +136,7 @@ def main() -> None:
 
     if not rows:
         print("No merchant category code mismatches found.")
-        return
+        return 0
 
     if args.summary:
         print(
@@ -152,7 +155,7 @@ def main() -> None:
                 f"{merchant_id}\t{merchant_code}\t{transaction_codes}\t"
                 f"{mismatch_count}\t{null_count}"
             )
-        return
+        return 0
 
     print(
         "merchant_id\ttransaction_merchant_category_code\t"
@@ -167,7 +170,8 @@ def main() -> None:
             f"{merchant_id}\t{transaction_code}\t{merchant_code}\t"
             f"{transaction_count}"
         )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

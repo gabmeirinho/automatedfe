@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 import logging
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from automatedfe.data.sorting import (
 )
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -38,10 +39,11 @@ def main() -> None:
         action="store_true",
         help="Show a live DuckDB progress bar for long-running queries",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     sort_dataset(args.input, args.output, force=args.force, progress=args.progress)
     print(f"Sorted dataset written to {args.output.resolve()}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

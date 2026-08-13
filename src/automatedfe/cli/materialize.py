@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 import logging
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from automatedfe.data.transaction_materialization import (
 )
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -45,7 +46,7 @@ def main() -> None:
         action="store_true",
         help="Log per-chunk and per-column progress",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     materialize_transactions(
         args.input,
         args.output_dir,
@@ -54,7 +55,8 @@ def main() -> None:
         progress=args.progress,
     )
     print(f"Materialized columns written to {args.output_dir.resolve()}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

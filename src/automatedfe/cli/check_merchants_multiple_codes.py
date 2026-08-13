@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
 
 import duckdb
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from automatedfe.data.sorting import PROJECT_ROOT
+
+
 DEFAULT_INPUT = PROJECT_ROOT / "data" / "loan" / "merchants.parquet"
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--input",
@@ -20,7 +23,7 @@ def main() -> None:
         default=DEFAULT_INPUT,
         help=f"Merchants parquet file (default: {DEFAULT_INPUT})",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not args.input.exists():
         parser.error(f"Input parquet file does not exist: {args.input}")
@@ -60,12 +63,13 @@ def main() -> None:
 
     if not rows:
         print("No merchants have more than one merchant_category_code.")
-        return
+        return 0
 
     print("merchant_id\tmerchant_code_count\tmerchant_category_codes")
     for merchant_id, code_count, merchant_codes in rows:
         print(f"{merchant_id}\t{code_count}\t{merchant_codes}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

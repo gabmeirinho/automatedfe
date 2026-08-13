@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
 
 import duckdb
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from automatedfe.data.sorting import PROJECT_ROOT
+
+
 DEFAULT_INPUT_DIR = PROJECT_ROOT / "data" / "loan" / "transformed"
 
 
@@ -23,7 +26,7 @@ def dataset_paths(input_dir: Path, recursive: bool) -> list[Path]:
     return sorted(path for path in input_dir.glob(pattern) if path.is_file())
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--input-dir",
@@ -39,7 +42,7 @@ def main() -> None:
         action="store_true",
         help="Include parquet files in subdirectories as well",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not args.input_dir.is_dir():
         parser.error(f"Input directory does not exist: {args.input_dir}")
@@ -80,7 +83,8 @@ def main() -> None:
                 )
     finally:
         connection.close()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

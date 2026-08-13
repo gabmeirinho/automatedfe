@@ -4,14 +4,14 @@ import sys
 from automatedfe.data.transaction_materialization import materialize_transactions
 from tests.test_materialization import write_transformed_fixture
 
-SCRIPT = "scripts/check_mmap_lengths.py"
+COMMAND = ["-m", "automatedfe.cli", "validate", "mmap-lengths"]
 
 
 def run_checker(transformed_path, mmap_dir):
     return subprocess.run(
         [
             sys.executable,
-            SCRIPT,
+            *COMMAND,
             "--transformed",
             str(transformed_path),
             "--mmap-dir",

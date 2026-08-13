@@ -16,6 +16,8 @@ import duckdb
 
 from .sorting import (
     DEFAULT_DATASET_INPUT,
+    DEFAULT_INPUT,
+    DEFAULT_OUTPUT,
     DUCKDB_MEMORY_LIMIT,
     PROJECT_ROOT,
 )

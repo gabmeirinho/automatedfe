@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 from automatedfe.data.preprocessing import (
@@ -19,7 +20,7 @@ from automatedfe.data.preprocessing import (
 )
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--transactions",
@@ -84,7 +85,7 @@ def main() -> None:
         action="store_true",
         help="Show a live DuckDB progress bar for long-running queries",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     preprocess(
@@ -104,7 +105,8 @@ def main() -> None:
     print(f"Label mapping written to {args.mapping.resolve()}")
     if not args.no_materialize:
         print(f"Mmap columns written to {args.mmap_dir.resolve()}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

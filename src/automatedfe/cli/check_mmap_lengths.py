@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 import json
 from pathlib import Path
 
@@ -80,7 +81,7 @@ def mmap_lengths(mmap_dir: Path) -> dict[str, int]:
     return lengths
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--transformed",
@@ -94,7 +95,7 @@ def main() -> int:
         default=DEFAULT_MMAP_DIR,
         help=f"Directory containing mmap files (default: {DEFAULT_MMAP_DIR})",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not args.transformed.is_file():
         parser.error(
