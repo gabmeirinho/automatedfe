@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from collections.abc import Sequence
 from pathlib import Path
 from automatedfe.encoding import DEFAULT_MAPPING_OUTPUT
@@ -37,6 +38,40 @@ def _positive_int(value: str) -> int:
         raise argparse.ArgumentTypeError("must be an integer") from error
     if converted <= 0:
         raise argparse.ArgumentTypeError("must be a positive integer")
+    return converted
+
+
+def _nonnegative_int(value: str) -> int:
+    try:
+        converted = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be an integer") from error
+    if converted < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return converted
+
+
+def _finite_float(value: str) -> float:
+    try:
+        converted = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a number") from error
+    if not math.isfinite(converted):
+        raise argparse.ArgumentTypeError("must be a finite number")
+    return converted
+
+
+def _nonnegative_float(value: str) -> float:
+    converted = _finite_float(value)
+    if converted < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative number")
+    return converted
+
+
+def _unit_interval_float(value: str) -> float:
+    converted = _finite_float(value)
+    if not 0.0 <= converted <= 1.0:
+        raise argparse.ArgumentTypeError("must be between 0 and 1")
     return converted
 
 
@@ -140,6 +175,82 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--promotion-interval",
+        type=_positive_int,
+        default=5,
+        help="Promote active candidates every N generations (default: 5)",
+    )
+    parser.add_argument(
+        "--first-promotion-top-k",
+        type=_nonnegative_int,
+        default=2,
+        help="Maximum candidates selected at the first promotion (default: 2)",
+    )
+    parser.add_argument(
+        "--promotion-add-k",
+        type=_nonnegative_int,
+        default=1,
+        help="Maximum candidates selected at later promotions (default: 1)",
+    )
+    parser.add_argument(
+        "--promotion-refresh-top-n",
+        type=_nonnegative_int,
+        default=50,
+        help=(
+            "Number of history candidates refreshed before promotion; 0 disables "
+            "the refresh (default: 50)"
+        ),
+    )
+    parser.add_argument(
+        "--archive-quality-threshold",
+        "--min-proxy-improvement",
+        dest="archive_quality_threshold",
+        type=_nonnegative_float,
+        default=0.001,
+        help=(
+            "Minimum per-fold proxy improvement for history admission "
+            "(default: 0.001)"
+        ),
+    )
+    parser.add_argument(
+        "--archive-correlation-threshold",
+        "--archive-correlation",
+        dest="archive_correlation_threshold",
+        type=_unit_interval_float,
+        default=0.85,
+        help=(
+            "Absolute correlation threshold for history admission "
+            "(default: 0.85)"
+        ),
+    )
+    parser.add_argument(
+        "--active-correlation-threshold",
+        "--promotion-corr-threshold-active",
+        dest="active_correlation_threshold",
+        type=_unit_interval_float,
+        default=0.90,
+        help=(
+            "Absolute correlation threshold against the active set "
+            "(default: 0.90)"
+        ),
+    )
+    parser.add_argument(
+        "--promotion-min-gain",
+        "--promotion-min-delta-threshold",
+        dest="promotion_min_gain",
+        type=_finite_float,
+        default=0.0,
+        help="Minimum gain required for active promotion (default: 0.0)",
+    )
+    parser.add_argument(
+        "--promotion-mean-gain",
+        "--promotion-min-mean-delta-threshold",
+        dest="promotion_mean_gain",
+        type=_finite_float,
+        default=0.0005,
+        help="Minimum mean gain required for active promotion (default: 0.0005)",
+    )
+    parser.add_argument(
         "--csv",
         "--csv-path",
         "--diagnostics-csv",
@@ -154,6 +265,20 @@ def build_parser() -> argparse.ArgumentParser:
         dest="archive_path",
         type=Path,
         help="Optional final Pareto archive JSON path (evaluated strategies only)",
+    )
+    parser.add_argument(
+        "--history",
+        "--history-path",
+        dest="history_path",
+        type=Path,
+        help="Optional complete filtered GP history JSON path (active GP only)",
+    )
+    parser.add_argument(
+        "--active-archive",
+        "--active-archive-path",
+        dest="active_archive_path",
+        type=Path,
+        help="Optional promoted active-set JSON path (active GP only)",
     )
     parser.add_argument(
         "--summary",
@@ -178,6 +303,14 @@ def _validate_strategy_options(
     strategy = SearchStrategy(args.strategy)
     if args.use_active_set and strategy is not SearchStrategy.GENETIC:
         parser.error("--use-active-set is supported only by strategy 'genetic'")
+    if args.use_active_set and args.score_metric != "brier_improvement":
+        parser.error("--use-active-set requires --score-metric brier_improvement")
+    if not args.use_active_set and (
+        args.history_path is not None or args.active_archive_path is not None
+    ):
+        parser.error(
+            "--history and --active-archive require --use-active-set"
+        )
     evaluated = strategy in _EVALUATED_STRATEGIES
     if evaluated:
         if args.time_budget is None:
@@ -211,6 +344,8 @@ def _preflight_outputs(parser: argparse.ArgumentParser, args: argparse.Namespace
     paths = {
         "CSV": args.csv_path,
         "archive": args.archive_path,
+        "history": args.history_path,
+        "active archive": args.active_archive_path,
         "summary": args.summary_path,
     }
     resolved: dict[str, Path] = {}
@@ -223,7 +358,10 @@ def _preflight_outputs(parser: argparse.ArgumentParser, args: argparse.Namespace
         resolved[label] = resolved_path
 
     if len(set(resolved.values())) != len(resolved):
-        parser.error("CSV, archive, and summary outputs must be different files")
+        parser.error(
+            "CSV, archive, history, active archive, and summary outputs "
+            "must be different files"
+        )
 
     if not args.force:
         for label, path in resolved.items():
@@ -258,6 +396,19 @@ def _summary_document(
             "population_size": args.population_size,
             "max_depth": args.max_depth,
             "use_active_set": args.use_active_set,
+            "promotion_interval": args.promotion_interval,
+            "first_promotion_top_k": args.first_promotion_top_k,
+            "promotion_add_k": args.promotion_add_k,
+            "promotion_refresh_top_n": args.promotion_refresh_top_n,
+            "archive_quality_threshold": args.archive_quality_threshold,
+            "archive_correlation_threshold": args.archive_correlation_threshold,
+            "active_correlation_threshold": args.active_correlation_threshold,
+            "promotion_min_gain": args.promotion_min_gain,
+            "promotion_mean_gain": args.promotion_mean_gain,
+            "csv_path": _path_value(args.csv_path),
+            "archive_path": _path_value(args.archive_path),
+            "history_path": _path_value(args.history_path),
+            "active_archive_path": _path_value(args.active_archive_path),
         },
         "counts": {
             "generated": result.generated_count,
@@ -274,11 +425,35 @@ def _summary_document(
         "final_metrics": dict(result.final_metrics),
     }
     active_set_metrics = getattr(result, "active_set_final_metrics", None)
-    if active_set_metrics is not None:
-        document["active_set_feature_count"] = len(result.active_set_expressions)
-        document["active_set_final_metrics"] = dict(active_set_metrics)
-        document["timings"]["active_set_final_evaluation_seconds"] = (
-            result.active_set_final_evaluation_duration_seconds
+    if args.use_active_set:
+        additive_metrics = getattr(result, "additive_metrics", None)
+        history_count = getattr(result, "history_count", 0)
+        active_set_count = getattr(
+            result,
+            "active_set_count",
+            len(getattr(result, "active_set_expressions", ())),
+        )
+        document["counts"]["history"] = history_count
+        document["counts"]["active_set"] = active_set_count
+        document["full_archive_feature_count"] = len(result.expressions)
+        document["full_archive_metrics"] = dict(result.final_metrics)
+        document["history_feature_count"] = history_count
+        document["active_set_feature_count"] = active_set_count
+        document["active_set_final_metrics"] = (
+            None if active_set_metrics is None else dict(active_set_metrics)
+        )
+        document["additive_metrics"] = (
+            None if additive_metrics is None else dict(additive_metrics)
+        )
+        document["timings"]["active_set_final_evaluation_seconds"] = getattr(
+            result,
+            "active_set_final_evaluation_duration_seconds",
+            None,
+        )
+        document["timings"]["additive_evaluation_seconds"] = getattr(
+            result,
+            "additive_evaluation_duration_seconds",
+            None,
         )
     if result.objectives is not None:
         document["objectives"] = [list(objectives) for objectives in result.objectives]
@@ -311,17 +486,51 @@ def _print_result(
             for name, value in sorted(result.final_metrics.items())
         )
         print(f"Final metrics: {metrics}")
-    active_set_metrics = getattr(result, "active_set_final_metrics", None)
-    if active_set_metrics is not None:
-        metrics = ", ".join(
-            f"{name}={value:.6f}"
-            for name, value in sorted(active_set_metrics.items())
+    if args.use_active_set:
+        active_set_expressions = getattr(result, "active_set_expressions", ())
+        history_count = getattr(result, "history_count", 0)
+        active_set_metrics = getattr(result, "active_set_final_metrics", None)
+        additive_metrics = getattr(result, "additive_metrics", None)
+        print(f"Full archive features: {len(result.expressions)}")
+        print(f"History features: {history_count}")
+        print(f"Active-set features: {len(active_set_expressions)}")
+        if active_set_metrics is not None:
+            metrics = ", ".join(
+                f"{name}={value:.6f}"
+                for name, value in sorted(active_set_metrics.items())
+            )
+            print(f"Active-set final metrics: {metrics}")
+        else:
+            print("Active-set final metrics: none")
+        if additive_metrics is not None:
+            metrics = ", ".join(
+                f"{name}={value:.6f}"
+                for name, value in sorted(additive_metrics.items())
+            )
+            print(f"Active additive metrics: {metrics}")
+        else:
+            print("Active additive metrics: none")
+        active_duration = getattr(
+            result,
+            "active_set_final_evaluation_duration_seconds",
+            None,
         )
-        print(f"Active-set features: {len(result.active_set_expressions)}")
-        print(f"Active-set final metrics: {metrics}")
+        additive_duration = getattr(
+            result,
+            "additive_evaluation_duration_seconds",
+            None,
+        )
+        if active_duration is not None or additive_duration is not None:
+            print(
+                "Active timings: "
+                f"rf={active_duration if active_duration is not None else 0.0:.6f}s, "
+                f"additive={additive_duration if additive_duration is not None else 0.0:.6f}s"
+            )
     for label, path in (
         ("Diagnostics", args.csv_path),
         ("Archive", args.archive_path),
+        ("History", args.history_path),
+        ("Active archive", args.active_archive_path),
         ("Summary", args.summary_path),
     ):
         if path is not None:
@@ -351,8 +560,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             population_size=args.population_size,
             max_depth=args.max_depth,
             use_active_set=args.use_active_set,
+            promotion_interval=args.promotion_interval,
+            first_promotion_top_k=args.first_promotion_top_k,
+            promotion_add_k=args.promotion_add_k,
+            promotion_refresh_top_n=args.promotion_refresh_top_n,
+            archive_quality_threshold=args.archive_quality_threshold,
+            archive_correlation_threshold=args.archive_correlation_threshold,
+            active_correlation_threshold=args.active_correlation_threshold,
+            promotion_min_gain=args.promotion_min_gain,
+            promotion_mean_gain=args.promotion_mean_gain,
             csv_path=args.csv_path,
             archive_path=args.archive_path,
+            history_path=args.history_path,
+            active_archive_path=args.active_archive_path,
             force=args.force,
         )
         if args.summary_path is not None:

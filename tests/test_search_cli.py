@@ -127,6 +127,157 @@ def test_cli_forwards_active_set_for_genetic_search(tmp_path, monkeypatch):
     assert calls[0][1]["use_active_set"] is True
 
 
+def test_cli_forwards_active_configuration_and_artifact_paths(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(strategy, **kwargs):
+        calls.append((strategy, kwargs))
+        return fake_result(strategy)
+
+    monkeypatch.setattr(search_cli, "run_feature_search", fake_run)
+    history_path = tmp_path / "history.json"
+    active_path = tmp_path / "active.json"
+
+    assert search_cli.main(
+        [
+            "--strategy",
+            "genetic",
+            "--time-budget",
+            "1",
+            "--use-active-set",
+            "--promotion-interval",
+            "7",
+            "--first-promotion-top-k",
+            "3",
+            "--promotion-add-k",
+            "2",
+            "--promotion-refresh-top-n",
+            "0",
+            "--archive-quality-threshold",
+            "0.002",
+            "--archive-correlation-threshold",
+            "0.8",
+            "--active-correlation-threshold",
+            "0.95",
+            "--promotion-min-gain",
+            "-0.1",
+            "--promotion-mean-gain",
+            "0.001",
+            "--history-path",
+            str(history_path),
+            "--active-archive-path",
+            str(active_path),
+        ]
+    ) == 0
+
+    assert calls[0][0] is SearchStrategy.GENETIC
+    kwargs = calls[0][1]
+    assert kwargs["use_active_set"] is True
+    assert kwargs["promotion_interval"] == 7
+    assert kwargs["first_promotion_top_k"] == 3
+    assert kwargs["promotion_add_k"] == 2
+    assert kwargs["promotion_refresh_top_n"] == 0
+    assert kwargs["archive_quality_threshold"] == 0.002
+    assert kwargs["archive_correlation_threshold"] == 0.8
+    assert kwargs["active_correlation_threshold"] == 0.95
+    assert kwargs["promotion_min_gain"] == -0.1
+    assert kwargs["promotion_mean_gain"] == 0.001
+    assert kwargs["history_path"] == history_path
+    assert kwargs["active_archive_path"] == active_path
+
+
+def test_cli_rejects_active_set_with_non_brier_metric_before_dispatch(monkeypatch):
+    called = False
+
+    def fail_if_called(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("search should not be dispatched")
+
+    monkeypatch.setattr(search_cli, "run_feature_search", fail_if_called)
+    with pytest.raises(SystemExit) as error:
+        search_cli.main(
+            [
+                "--strategy",
+                "genetic",
+                "--time-budget",
+                "1",
+                "--use-active-set",
+                "--score-metric",
+                "brier",
+            ]
+        )
+    assert error.value.code == 2
+    assert not called
+
+
+def test_cli_rejects_active_artifact_paths_without_active_set_before_dispatch(
+    monkeypatch, tmp_path
+):
+    called = False
+
+    def fail_if_called(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("search should not be dispatched")
+
+    monkeypatch.setattr(search_cli, "run_feature_search", fail_if_called)
+    with pytest.raises(SystemExit) as error:
+        search_cli.main(
+            [
+                "--strategy",
+                "enumerative",
+                "--time-budget",
+                "1",
+                "--history",
+                str(tmp_path / "history.json"),
+            ]
+        )
+    assert error.value.code == 2
+    assert not called
+
+
+def test_active_summary_and_output_handle_empty_active_set(tmp_path, monkeypatch, capsys):
+    summary_path = tmp_path / "summary.json"
+    result = fake_result(SearchStrategy.GENETIC)
+    result.active_set_expressions = ()
+    result.active_set_final_metrics = None
+    result.additive_metrics = None
+    result.history_count = 4
+    result.active_set_count = 0
+    result.active_set_final_evaluation_duration_seconds = None
+    result.additive_evaluation_duration_seconds = None
+
+    monkeypatch.setattr(
+        search_cli,
+        "run_feature_search",
+        lambda strategy, **_kwargs: result,
+    )
+
+    assert search_cli.main(
+        [
+            "--strategy",
+            "genetic",
+            "--time-budget",
+            "1",
+            "--use-active-set",
+            "--summary",
+            str(summary_path),
+        ]
+    ) == 0
+
+    summary = json.loads(summary_path.read_text())
+    assert summary["configuration"]["use_active_set"] is True
+    assert summary["counts"]["generated"] == 2
+    assert summary["history_feature_count"] == 4
+    assert summary["active_set_feature_count"] == 0
+    assert summary["active_set_final_metrics"] is None
+    assert summary["additive_metrics"] is None
+    assert summary["timings"]["active_set_final_evaluation_seconds"] is None
+    assert summary["timings"]["additive_evaluation_seconds"] is None
+    assert "Active-set final metrics: none" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     "arguments",
     [
