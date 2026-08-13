@@ -120,9 +120,9 @@ _COMPATIBILITY_EXPORTS = {
             "validate_correlation_threshold",
         )
     },
-    # Runner exports remain here until P2-C3 moves orchestration.
+    # Runner exports remain available as compatibility aliases.
     **{
-        name: ("automatedfe.features.runner", name)
+        name: ("automatedfe.search.runner", name)
         for name in (
             "DIAGNOSTIC_COLUMNS",
             "RunnerDiagnosticsRecorder",

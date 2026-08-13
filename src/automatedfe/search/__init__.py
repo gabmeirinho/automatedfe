@@ -1,9 +1,7 @@
 """Canonical archive, feature-search, and search-orchestration APIs.
 
-Archive state and candidate-search strategies live in this package. The
-high-level runner remains in ``automatedfe.features.runner`` until P2-C3, but
-is re-exported here to keep the destination namespace stable during the
-migration.
+Archive state, candidate-search strategies, and high-level orchestration live
+in this package.
 """
 
 from .archive import (
@@ -61,7 +59,7 @@ from .unbound_enumerative_search import (
     UnboundEnumerativeSearch,
     build_unbound_enumerative_search,
 )
-from ..features.runner import (
+from .runner import (
     DIAGNOSTIC_COLUMNS,
     RunnerDiagnosticsRecorder,
     SearchRunResult,

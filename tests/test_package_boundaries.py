@@ -64,7 +64,11 @@ def test_search_implementations_have_canonical_module_paths():
     assert automatedfe.search.build_random_search.__module__ == (
         "automatedfe.search.random_search"
     )
+    assert automatedfe.search.SearchStrategy.__module__ == (
+        "automatedfe.search.runner"
+    )
     assert automatedfe.features.ArchiveSnapshot is automatedfe.search.ArchiveSnapshot
+    assert automatedfe.features.SearchStrategy is automatedfe.search.SearchStrategy
 
 
 def test_cli_namespace_has_no_import_side_effect_exports_yet():

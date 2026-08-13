@@ -45,7 +45,7 @@ from .features.feature_materialization import (
     materialize_feature,
     materialize_individual,
 )
-from .features.runner import (
+from .search.runner import (
     DIAGNOSTIC_COLUMNS,
     RunnerDiagnosticsRecorder,
     SearchRunResult,
