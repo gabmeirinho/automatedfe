@@ -42,7 +42,7 @@ def test_data_pipeline_implementations_have_canonical_module_paths():
     assert automatedfe.data.first_sorting_violation.__module__ == (
         "automatedfe.data.validation"
     )
-    assert automatedfe.data.PROJECT_ROOT == Path(__file__).resolve().parents[1]
+    assert automatedfe.data.PROJECT_ROOT == Path(__file__).resolve().parents[2]
 
 
 def test_evaluation_implementations_have_canonical_module_paths():

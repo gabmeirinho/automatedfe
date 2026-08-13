@@ -9,18 +9,18 @@ from geneticengine.problems import Fitness, MultiObjectiveProblem
 from geneticengine.solutions.individual import ConcreteIndividual
 from sklearn.ensemble import RandomForestClassifier
 
-from automatedfe.evaluation import (
+from automatedfe.evaluation.final_evaluation import (
     AdditiveEvaluationResult,
     FinalEvaluationResult,
     FinalEvaluator,
 )
-from automatedfe.features import (
+from automatedfe.features.feature_materialization import FeatureMaterializer
+from automatedfe.features.feature_spec import RowWindow
+from automatedfe.features.feature_types import TxFeature
+from automatedfe.features.grammar import MeanAmount, TotalAmount
+from automatedfe.search.archive import (
     ArchiveSnapshot,
     ArchiveStep,
-    FeatureMaterializer,
-    MeanAmount,
-    TotalAmount,
-    TxFeature,
 )
 
 LABEL_MAPPING = {

@@ -2,7 +2,7 @@ import subprocess
 import sys
 
 from automatedfe.data.transaction_materialization import materialize_transactions
-from tests.test_materialization import write_transformed_fixture
+from tests.conftest import write_transformed_fixture
 
 COMMAND = ["-m", "automatedfe.cli", "validate", "mmap-lengths"]
 

@@ -6,11 +6,11 @@ import pytest
 from geneticengine.evaluation.budget import EvaluationBudget
 
 import automatedfe.search.search as shared_module
-from automatedfe.features import (
+from automatedfe.features.grammar import expr
+from automatedfe.search import (
     ArchiveStep,
     MaterializingGeneticProgramming,
     build_search_algorithm,
-    expr,
     load_archive,
 )
 from geneticengine.algorithms.gp.operators.combinators import ParallelStep, SequenceStep

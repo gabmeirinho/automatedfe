@@ -6,15 +6,17 @@ import numpy as np
 import pytest
 
 import automatedfe.features.feature_materialization as feature_materialization
-from automatedfe.features import (
-    CountTotal,
+from automatedfe.features.feature_materialization import (
     FeatureMaterializer,
-    RowWindow,
-    Sub,
-    TxFeature,
-    collect_features,
     materialize_feature,
 )
+from automatedfe.features.feature_types import TxFeature
+from automatedfe.features.grammar import (
+    CountTotal,
+    Sub,
+    collect_features,
+)
+from automatedfe.features.feature_spec import RowWindow
 from automatedfe.data.transaction_materialization import (
     MANIFEST_FILENAME,
     MMAP_SUFFIX,
@@ -23,34 +25,7 @@ from automatedfe.data.transaction_materialization import (
     materialize_transactions,
     read_manifest,
 )
-
-
-def write_transformed_fixture(tmp_path):
-    """Write a parquet mimicking the encoded transactions schema."""
-
-    path = tmp_path / "transformed.parquet"
-    duckdb.sql(
-        """
-        COPY (
-            SELECT * FROM VALUES
-                (CAST(1 AS BIGINT), CAST(100.5 AS DOUBLE), 0, TIMESTAMPTZ '2024-01-01 00:00:00+00:00', CAST(7 AS BIGINT), '5812'),
-                (CAST(1 AS BIGINT), CAST(200.0 AS DOUBLE), 1, TIMESTAMPTZ '2024-01-02 00:00:00+00:00', CAST(7 AS BIGINT), '5812'),
-                (CAST(2 AS BIGINT), CAST(50.25 AS DOUBLE), 0, TIMESTAMPTZ '2024-02-01 00:00:00+00:00', CAST(9 AS BIGINT), '5411'),
-                (CAST(2 AS BIGINT), CAST(75.0 AS DOUBLE), 2, TIMESTAMPTZ '2024-02-05 00:00:00+00:00', CAST(9 AS BIGINT), '5411'),
-                (CAST(3 AS BIGINT), CAST(10.0 AS DOUBLE), 1, TIMESTAMPTZ '2024-03-01 00:00:00+00:00', CAST(11 AS BIGINT), '0')
-            AS t(
-                merchant_id,
-                amount,
-                status,
-                created_at,
-                card_token_id,
-                merchant_category_code
-            )
-        ) TO ? (FORMAT PARQUET)
-        """,
-        params=[str(path)],
-    )
-    return path
+from tests.conftest import write_transformed_fixture
 
 
 def test_column_dtype_mapping():

@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from automatedfe.features import (
+from automatedfe.features.feature_schema import TX_ROW_WINDOWS
+from automatedfe.features.grammar import (
     Add,
     Agg,
     ArithmeticOp,
@@ -20,7 +21,6 @@ from automatedfe.features import (
     SafeDiv,
     StdAmount,
     Sub,
-    TX_ROW_WINDOWS,
     TotalAmount,
     build_grammar,
     collect_features,

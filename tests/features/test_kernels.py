@@ -3,17 +3,19 @@ import math
 import numpy as np
 import pytest
 
-from automatedfe.features import (
+from automatedfe.features.feature_spec import (
     Aggregation,
+    RowWindow,
+    TimeWindow,
+    TotalHistoryWindow,
+)
+from automatedfe.features.kernels import (
     COUNT,
     MAX,
     MEAN,
     SUM,
     TIME_WINDOW,
     TOTAL_HISTORY,
-    TotalHistoryWindow,
-    RowWindow,
-    TimeWindow,
     aggregate,
     sliding_window,
 )
