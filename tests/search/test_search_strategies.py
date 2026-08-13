@@ -7,19 +7,21 @@ import automatedfe.search.enumerative_search as enumerative_module
 import automatedfe.search.random_search as random_module
 import automatedfe.search.search as shared_module
 import automatedfe.search.unbound_enumerative_search as unbound_module
-from automatedfe.features import (
+from automatedfe.features.grammar import (
     Add,
     CountCategory,
-    MaterializingArchiveSearch,
     MeanAmount,
-    build_enumerative_search,
-    build_unbound_enumerative_search,
     build_grammar,
+    tree_depth,
+)
+from automatedfe.search import (
+    MaterializingArchiveSearch,
+    build_unbound_enumerative_search,
+    build_enumerative_search,
     build_random_search,
     canonical_expression_key,
     collect_unique_expressions,
     iter_bounded_expressions,
-    tree_depth,
 )
 
 LABEL_MAPPING = {

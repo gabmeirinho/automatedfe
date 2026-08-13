@@ -2,16 +2,16 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from automatedfe.features import (
+from automatedfe.features.feature_spec import (
     ROW_WINDOWS,
     TIME_WINDOWS,
     TOTAL_HISTORY_WINDOW,
-    TxFeature,
+    WINDOW_CATALOG,
     RowWindow,
     TimeWindow,
     TotalHistoryWindow,
-    WINDOW_CATALOG,
 )
+from automatedfe.features.feature_types import TxFeature
 
 
 def test_row_windows_catalog():

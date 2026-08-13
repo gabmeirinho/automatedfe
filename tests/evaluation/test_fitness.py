@@ -6,13 +6,14 @@ import pytest
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeRegressor
 
-from automatedfe.evaluation import (
+from automatedfe.evaluation.fitness import (
     MIN_LOGIT_WEIGHT,
     RandomForestFitness,
     ResidualEvaluator,
     objectives_are_finite,
 )
-from automatedfe.features import FeatureMaterializer, TxFeature
+from automatedfe.features.feature_materialization import FeatureMaterializer
+from automatedfe.features.feature_types import TxFeature
 
 
 def write_temporal_dataset(path):

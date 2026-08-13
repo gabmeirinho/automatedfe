@@ -10,7 +10,7 @@ from geneticengine.problems import Fitness, MultiObjectiveProblem
 from geneticengine.solutions.individual import ConcreteIndividual
 
 import automatedfe.search.archive as archive_module
-from automatedfe.features import (
+from automatedfe.features.grammar import (
     Add,
     AvgDailyAmount,
     AvgDailyAmountCategory,

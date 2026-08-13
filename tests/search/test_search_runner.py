@@ -7,10 +7,10 @@ import pytest
 
 import automatedfe.search.runner as runner_module
 import automatedfe.search.search as shared_search_module
-from automatedfe.search import (
+from automatedfe.search.archive import load_archive
+from automatedfe.search.runner import (
     DIAGNOSTIC_COLUMNS,
     SearchStrategy,
-    load_archive,
     run_feature_search,
 )
 
