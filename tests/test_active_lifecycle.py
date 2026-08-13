@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from automatedfe.features.archive import ActiveSetManager, ArchiveStep
 from geneticengine.evaluation.sequential import SequentialEvaluator
@@ -81,6 +82,265 @@ def test_first_promotion_selects_sequential_winners_and_versions():
         for row in archive.promotion_checks
         if row["outcome"] == "promoted"
     ] == [0, 1]
+
+
+def test_incremental_promotion_appends_one_candidate_at_later_interval():
+    expressions = [Expression("a"), Expression("b"), Expression("c"), Expression("d")]
+    scores = {
+        "a": (0.20, 0.20, 0.20, 3.0),
+        "b": (0.30, 0.30, 0.30, 2.0),
+        "c": (0.40, 0.40, 0.40, 1.0),
+        "d": (0.10, 0.10, 0.10, 0.5),
+    }
+    signals = {
+        "a": np.array([0.0, 1.0, 0.0, 1.0]),
+        "b": np.array([0.0, 0.0, 1.0, 1.0]),
+        "c": np.array([0.0, 1.0, 2.0, 1.0]),
+        "d": np.array([1.0, 0.0, 1.0, 0.0]),
+    }
+    problem = MultiObjectiveProblem(
+        lambda expression: list(scores[expression.name]),
+        minimize=[False, False, False, True],
+    )
+    archive = ActiveSetManager(
+        signal_provider=lambda expression: signals[expression.name],
+        use_active_set=True,
+        promotion_refresh_top_n=0,
+        first_promotion_top_k=2,
+        promotion_add_k=1,
+        promotion_min_gain=0.0,
+        promotion_mean_gain=0.0,
+        active_correlation_threshold=0.99,
+    )
+    individuals = [ConcreteIndividual(expression) for expression in expressions]
+    archive.history = individuals
+    archive._history_signals = [signals[expression.name] for expression in expressions]
+    archive._history_keys = {
+        archive._expression_key(individual) for individual in individuals
+    }
+    archive.admission_objectives = {
+        archive._expression_key(individual): scores[individual.get_phenotype().name]
+        for individual in individuals
+    }
+    archive._problem = problem
+
+    class VersionedEvaluator:
+        def evaluate(self, evaluation_problem, candidates):
+            del evaluation_problem
+            for candidate in candidates:
+                version = archive.baseline_version
+                gain = {
+                    ("a", 0): (0.20, 0.20, 0.20),
+                    ("b", 0): (0.40, 0.40, 0.40),
+                    ("c", 0): (0.50, 0.50, 0.50),
+                    ("d", 0): (0.15, 0.15, 0.15),
+                    ("a", 1): (0.20, 0.20, 0.20),
+                    ("b", 1): (0.45, 0.45, 0.45),
+                    ("d", 1): (0.15, 0.15, 0.15),
+                    ("a", 2): (0.22, 0.22, 0.22),
+                    ("d", 2): (0.15, 0.15, 0.15),
+                }[(candidate.get_phenotype().name, version)]
+                candidate.set_fitness(
+                    problem,
+                    Fitness([*gain, 1.0], valid=True),
+                )
+                yield candidate
+
+    assert archive.maybe_promote(problem, 5, evaluator=VersionedEvaluator())
+    assert [individual.get_phenotype().name for individual in archive.active_individuals] == [
+        "c",
+        "b",
+    ]
+    assert archive.baseline_version == 2
+
+    assert archive.maybe_promote(problem, 10, evaluator=VersionedEvaluator())
+    assert [individual.get_phenotype().name for individual in archive.active_individuals] == [
+        "c",
+        "b",
+        "a",
+    ]
+    assert archive.baseline_version == 3
+    assert [
+        row["baseline_version"]
+        for row in archive.promotion_checks
+        if row["outcome"] == "promoted"
+    ] == [0, 1, 2]
+
+
+def test_promotion_refresh_top_n_zero_disables_only_the_refresh(monkeypatch):
+    expressions = [Expression("a"), Expression("b")]
+    scores = {
+        "a": (0.20, 0.20, 0.20, 3.0),
+        "b": (0.30, 0.30, 0.30, 2.0),
+    }
+    signals = {
+        "a": np.array([0.0, 1.0, 0.0, 1.0]),
+        "b": np.array([0.0, 0.0, 1.0, 1.0]),
+    }
+    problem = MultiObjectiveProblem(
+        lambda expression: list(scores[expression.name]),
+        minimize=[False, False, False, True],
+    )
+    archive = ActiveSetManager(
+        signal_provider=lambda expression: signals[expression.name],
+        use_active_set=True,
+        promotion_refresh_top_n=0,
+        first_promotion_top_k=1,
+        promotion_min_gain=0.0,
+        promotion_mean_gain=0.0,
+        active_correlation_threshold=0.99,
+    )
+    individuals = [ConcreteIndividual(expression) for expression in expressions]
+    archive.history = individuals
+    archive._history_signals = [signals[expression.name] for expression in expressions]
+    archive._history_keys = {
+        archive._expression_key(individual) for individual in individuals
+    }
+    archive.admission_objectives = {
+        archive._expression_key(individual): scores[individual.get_phenotype().name]
+        for individual in individuals
+    }
+    archive._problem = problem
+
+    refresh_calls = []
+    monkeypatch.setattr(
+        archive,
+        "_refresh_history",
+        lambda _evaluator, _problem: refresh_calls.append(1),
+    )
+
+    class Evaluating:
+        def evaluate(self, evaluation_problem, candidates):
+            del evaluation_problem
+            for candidate in candidates:
+                candidate.set_fitness(
+                    problem,
+                    Fitness([0.50, 0.50, 0.50, 1.0], valid=True),
+                )
+                yield candidate
+
+    assert archive.maybe_promote(problem, 5, evaluator=Evaluating())
+    assert refresh_calls == []
+    assert len(archive.active_individuals) == 1
+
+    refresh_calls.clear()
+    archive.active_individuals = []
+    archive.promotion_refresh_top_n = 1
+    assert archive.maybe_promote(problem, 10, evaluator=Evaluating())
+    assert refresh_calls == [1]
+
+
+def test_exact_promotion_ties_preserve_stable_admission_order():
+    expressions = [Expression("x"), Expression("y")]
+    scores = {
+        "x": (0.30, 0.30, 0.30, 2.0),
+        "y": (0.30, 0.30, 0.30, 2.0),
+    }
+    signals = {
+        "x": np.array([0.0, 1.0, 0.0, 1.0]),
+        "y": np.array([0.0, 0.0, 1.0, 1.0]),
+    }
+    problem = MultiObjectiveProblem(
+        lambda expression: list(scores[expression.name]),
+        minimize=[False, False, False, True],
+    )
+    archive = ActiveSetManager(
+        signal_provider=lambda expression: signals[expression.name],
+        use_active_set=True,
+        promotion_refresh_top_n=0,
+        first_promotion_top_k=1,
+        promotion_min_gain=0.0,
+        promotion_mean_gain=0.0,
+        active_correlation_threshold=0.99,
+    )
+    individuals = [ConcreteIndividual(expression) for expression in expressions]
+    archive.history = individuals
+    archive._history_signals = [signals[expression.name] for expression in expressions]
+    archive._history_keys = {
+        archive._expression_key(individual) for individual in individuals
+    }
+    archive.admission_objectives = {
+        archive._expression_key(individual): scores[individual.get_phenotype().name]
+        for individual in individuals
+    }
+    archive._problem = problem
+
+    class TiedEvaluator:
+        def evaluate(self, evaluation_problem, candidates):
+            del evaluation_problem
+            for candidate in candidates:
+                candidate.set_fitness(
+                    problem,
+                    Fitness([0.50, 0.50, 0.50, 2.0], valid=True),
+                )
+                yield candidate
+
+    assert archive.maybe_promote(problem, 5, evaluator=TiedEvaluator())
+    assert [individual.get_phenotype().name for individual in archive.active_individuals] == [
+        "x"
+    ]
+
+
+def test_promotion_diagnostics_contain_generation_phase_version_and_gains():
+    expressions = [Expression("a"), Expression("b"), Expression("c")]
+    scores = {
+        "a": (0.20, 0.20, 0.20, 3.0),
+        "b": (0.30, 0.30, 0.30, 2.0),
+        "c": (0.40, 0.40, 0.40, 1.0),
+    }
+    signals = {
+        "a": np.array([0.0, 1.0, 0.0, 1.0]),
+        "b": np.array([0.0, 0.0, 1.0, 1.0]),
+        "c": np.array([0.0, 1.0, 2.0, 1.0]),
+    }
+    problem = MultiObjectiveProblem(
+        lambda expression: list(scores[expression.name]),
+        minimize=[False, False, False, True],
+    )
+    archive = ActiveSetManager(
+        signal_provider=lambda expression: signals[expression.name],
+        use_active_set=True,
+        promotion_refresh_top_n=0,
+        first_promotion_top_k=1,
+        promotion_min_gain=0.0,
+        promotion_mean_gain=0.0,
+        active_correlation_threshold=0.99,
+    )
+    individuals = [ConcreteIndividual(expression) for expression in expressions]
+    archive.history = individuals
+    archive._history_signals = [signals[expression.name] for expression in expressions]
+    archive._history_keys = {
+        archive._expression_key(individual) for individual in individuals
+    }
+    archive.admission_objectives = {
+        archive._expression_key(individual): scores[individual.get_phenotype().name]
+        for individual in individuals
+    }
+    archive._problem = problem
+
+    class Evaluating:
+        def evaluate(self, evaluation_problem, candidates):
+            del evaluation_problem
+            for candidate in candidates:
+                candidate.set_fitness(
+                    problem,
+                    Fitness([0.50, 0.50, 0.50, 1.0], valid=True),
+                )
+                yield candidate
+
+    assert archive.maybe_promote(problem, 5, evaluator=Evaluating())
+    assert archive.promotion_checks
+    for row in archive.promotion_checks:
+        assert row["generation"] == 5
+        assert row["phase"] in {"first_promotion", "incremental_promotion"}
+        assert isinstance(row["baseline_version"], int)
+        assert isinstance(row["expression"], str)
+        assert isinstance(row["proxy_gains"], list)
+        assert isinstance(row["current_gains"], list)
+        assert isinstance(row["minimum_gain_threshold"], float)
+        assert isinstance(row["mean_gain_threshold"], float)
+        assert row["outcome"] in {"promoted", "checked", "rejected", "not_selected"}
+        assert isinstance(row["reason"], str)
 
 
 def test_active_set_manager_does_not_change_canonical_archive_membership():
