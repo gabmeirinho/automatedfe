@@ -651,6 +651,8 @@ def run_feature_search(
         raise ValueError("use_active_set must be a boolean")
     if use_active_set and selected_strategy is not SearchStrategy.GENETIC:
         raise ValueError("use_active_set is supported only by the genetic strategy")
+    if use_active_set and score_metric != "brier_improvement":
+        raise ValueError("use_active_set requires score_metric='brier_improvement'")
     validated_time_budget, validated_candidate_count = _validate_budget_contract(
         selected_strategy,
         time_budget_seconds=time_budget_seconds,
