@@ -15,3 +15,5 @@ runs/
 # DuckDB temporary spill files
 /.tmp/
 *.tmp
+
+roadmap/
