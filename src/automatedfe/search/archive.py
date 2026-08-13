@@ -32,6 +32,13 @@ FORMAT_IDENTIFIER = "automatedfe-archive"
 FORMAT_VERSION = 1
 ACTIVE_SET_FORMAT_IDENTIFIER = "automatedfe-active-set"
 ACTIVE_SET_FORMAT_VERSION = 1
+# Structured run snapshots never embed a label mapping: they reference the
+# single run-level mapping owned by the run manifest instead. This format is
+# distinct from the standalone archive format so loose outputs are never
+# mistaken for structured run artifacts.
+SNAPSHOT_FORMAT_IDENTIFIER = "automatedfe-archive-snapshot"
+SNAPSHOT_FORMAT_VERSION = 1
+SNAPSHOT_MAPPING_REFERENCE = {"file": "manifest.json", "source": "run_manifest"}
 OBJECTIVES_PER_ARCHIVE = 4
 ARCHIVE_PROXY_OBJECTIVES = 3
 DEFAULT_ARCHIVE_QUALITY_THRESHOLD = 0.001
@@ -647,6 +654,165 @@ def load_active_set_snapshot(
         promoted_baseline_versions=promoted_baseline_versions,
         promotion_events=tuple(dict(event) for event in events),
         promotion_checks=tuple(dict(check) for check in checks),
+    )
+
+
+def _validate_snapshot_mapping_ref(mapping_ref: object) -> dict[str, str]:
+    if not isinstance(mapping_ref, Mapping):
+        raise TypeError(
+            "Snapshot mapping_ref must be a JSON object identifying the run manifest"
+        )
+    if set(mapping_ref) != {"file", "source"}:
+        raise ValueError(
+            "Snapshot mapping_ref must declare exactly 'file' and 'source' keys"
+        )
+    resolved: dict[str, str] = {}
+    for name in ("file", "source"):
+        value = mapping_ref[name]
+        if not isinstance(value, str) or not value:
+            raise ValueError(
+                f"Snapshot mapping_ref {name!r} must be a non-empty string"
+            )
+        resolved[name] = value
+    return resolved
+
+
+def build_snapshot_document(
+    expressions: Sequence[expr],
+    objectives: Sequence[Sequence[float]],
+    *,
+    minimize: Sequence[bool],
+    mapping_ref: Mapping[str, str],
+) -> dict[str, object]:
+    """Build a structured run snapshot without embedding a mapping copy.
+
+    Structured snapshots reference the run manifest owning the single run-level
+    label mapping; *mapping_ref* names that manifest. This keeps the standalone
+    archive serialization (which embeds its mapping) untouched.
+    """
+
+    reference = _validate_snapshot_mapping_ref(mapping_ref)
+    return {
+        "format": SNAPSHOT_FORMAT_IDENTIFIER,
+        "version": SNAPSHOT_FORMAT_VERSION,
+        "problem": {
+            "number_of_objectives": len(minimize),
+            "minimize": [bool(value) for value in minimize],
+        },
+        "mapping_ref": reference,
+        "expressions": [
+            {
+                "expression": encode_expression(expression),
+                "objectives": [float(value) for value in entry_objectives],
+            }
+            for expression, entry_objectives in zip(expressions, objectives)
+        ],
+    }
+
+
+def write_snapshot(
+    path: str | PathLike[str],
+    expressions: Sequence[expr],
+    objectives: Sequence[Sequence[float]],
+    *,
+    minimize: Sequence[bool],
+    mapping_ref: Mapping[str, str],
+) -> Path:
+    """Atomically write a structured run snapshot JSON file."""
+
+    document = build_snapshot_document(
+        expressions,
+        objectives,
+        minimize=minimize,
+        mapping_ref=mapping_ref,
+    )
+    return _atomic_write_json(Path(path).resolve(), document)
+
+
+def load_snapshot(
+    path: str | PathLike[str],
+    mapping: Mapping[str, Mapping[str, int]] | None,
+) -> ArchiveSnapshot:
+    """Load and validate a structured run snapshot.
+
+    A structured snapshot never embeds a label mapping: *mapping* must be the
+    single run-level mapping recorded in the run manifest, which is validated
+    against the snapshot's ``mapping_ref``. Loading never merges or resumes a
+    search.
+    """
+
+    snapshot_path = Path(path).resolve()
+    if not snapshot_path.is_file():
+        raise FileNotFoundError(f"Snapshot JSON file does not exist: {snapshot_path}")
+    try:
+        with open(snapshot_path) as snapshot_file:
+            data = json.load(snapshot_file)
+    except json.JSONDecodeError as error:
+        raise ValueError(
+            f"Snapshot is not valid JSON: {snapshot_path}: {error}"
+        ) from error
+
+    if not isinstance(data, dict):
+        raise TypeError(f"Snapshot JSON must be an object: {snapshot_path}")
+    if data.get("format") != SNAPSHOT_FORMAT_IDENTIFIER:
+        raise ValueError(
+            f"Unknown snapshot format: {data.get('format')!r}"
+        )
+    version = data.get("version")
+    if version != SNAPSHOT_FORMAT_VERSION:
+        raise ValueError(
+            f"Unsupported snapshot version {version!r} "
+            f"(expected {SNAPSHOT_FORMAT_VERSION})"
+        )
+    if "mapping" in data:
+        raise ValueError(
+            "Structured snapshots must not embed a mapping copy; resolve the "
+            "run-level mapping from the run manifest"
+        )
+    if data.get("mapping_ref") is None:
+        raise ValueError(
+            "Snapshot is missing its 'mapping_ref' reference to the run manifest"
+        )
+    _validate_snapshot_mapping_ref(data.get("mapping_ref"))
+
+    problem = data.get("problem")
+    if not isinstance(problem, dict):
+        raise TypeError("Snapshot is missing its 'problem' metadata")
+    n_objectives = problem.get("number_of_objectives")
+    minimize = problem.get("minimize")
+    if n_objectives != OBJECTIVES_PER_ARCHIVE:
+        raise ValueError(
+            f"Snapshot problem must declare {OBJECTIVES_PER_ARCHIVE} objectives"
+        )
+    if not isinstance(minimize, list) or len(minimize) != n_objectives:
+        raise ValueError(
+            f"Snapshot problem must declare exactly {n_objectives} "
+            "minimization directions"
+        )
+    if not all(isinstance(value, bool) for value in minimize):
+        raise ValueError("Snapshot minimization directions must be boolean values")
+
+    entries = _validate_entries(data.get("expressions"), n_objectives)
+    if mapping is None:
+        raise ValueError(
+            "Structured snapshots resolve the run-level mapping; a mapping is "
+            "required to load this snapshot"
+        )
+    try:
+        code_lists_from_mapping(mapping)
+    except ValueError as error:
+        raise ValueError(
+            f"Run-level mapping cannot resolve snapshot expressions: {error}"
+        ) from error
+
+    expressions = tuple(decode_expression(entry["expression"]) for entry in entries)
+    objectives = tuple(tuple(entry["objectives"]) for entry in entries)
+    return ArchiveSnapshot(
+        version=version,
+        minimize=tuple(minimize),
+        mapping=dict(mapping),
+        expressions=expressions,
+        objectives=objectives,
     )
 
 
@@ -1750,18 +1916,24 @@ __all__ = [
     "FORMAT_IDENTIFIER",
     "FORMAT_VERSION",
     "OBJECTIVES_PER_ARCHIVE",
+    "SNAPSHOT_FORMAT_IDENTIFIER",
+    "SNAPSHOT_FORMAT_VERSION",
+    "SNAPSHOT_MAPPING_REFERENCE",
     "ActiveSetSnapshot",
     "ArchiveSnapshot",
     "ArchiveStep",
     "ActiveSetManager",
     "GPArchiveStep",
     "absolute_pearson_correlation",
+    "build_snapshot_document",
     "correlation_rejection",
     "decode_expression",
     "encode_expression",
     "is_correlated_pairwise",
     "load_active_set_snapshot",
     "load_archive",
+    "load_snapshot",
     "validate_archive_quality_threshold",
     "validate_correlation_threshold",
+    "write_snapshot",
 ]

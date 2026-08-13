@@ -33,10 +33,14 @@ from automatedfe.features.grammar import (
 from automatedfe.search.archive import (
     ActiveSetManager,
     ArchiveStep,
+    SNAPSHOT_MAPPING_REFERENCE,
+    build_snapshot_document,
     decode_expression,
     encode_expression,
     load_active_set_snapshot,
     load_archive,
+    load_snapshot,
+    write_snapshot,
 )
 
 
@@ -751,3 +755,143 @@ def test_save_history_and_active_snapshot_require_a_processed_population(tmp_pat
         manager.save_history(tmp_path / "history.json")
     with pytest.raises(ValueError, match="has not processed"):
         manager.save_active_snapshot(tmp_path / "active.json")
+
+
+def test_snapshot_round_trip_resolves_the_run_level_mapping(tmp_path):
+    expressions = [Add(MeanAmount(0), CountTotal(0)), Mul(MaxAmount(1), CountTotal(1))]
+    objectives = ((0.8, 0.8, 0.8, 1.0), (0.9, 0.7, 0.9, 1.5))
+    snapshot_path = tmp_path / "snapshots" / "generation_000000.json"
+
+    write_snapshot(
+        snapshot_path,
+        expressions,
+        objectives,
+        minimize=(False, False, False, True),
+        mapping_ref=SNAPSHOT_MAPPING_REFERENCE,
+    )
+
+    snapshot = load_snapshot(snapshot_path, LABEL_MAPPING)
+    assert snapshot.version == archive_module.SNAPSHOT_FORMAT_VERSION
+    assert snapshot.minimize == (False, False, False, True)
+    assert snapshot.mapping == LABEL_MAPPING
+    assert [str(expression) for expression in snapshot.expressions] == [
+        str(expression) for expression in expressions
+    ]
+    assert snapshot.objectives == objectives
+
+
+def test_snapshot_rejects_an_embedded_mapping_copy(tmp_path):
+    snapshot_path = tmp_path / "snapshots" / "generation_000000.json"
+    snapshot_path.parent.mkdir(parents=True)
+    document = build_snapshot_document(
+        [Add(MeanAmount(0), CountTotal(0))],
+        [(0.8, 0.8, 0.8, 1.0)],
+        minimize=(False, False, False, True),
+        mapping_ref=SNAPSHOT_MAPPING_REFERENCE,
+    )
+    document["mapping"] = LABEL_MAPPING
+    snapshot_path.write_text(json.dumps(document))
+
+    with pytest.raises(ValueError, match="must not embed a mapping copy"):
+        load_snapshot(snapshot_path, LABEL_MAPPING)
+
+
+def test_snapshot_requires_the_run_level_mapping(tmp_path):
+    snapshot_path = tmp_path / "snapshots" / "generation_000000.json"
+    write_snapshot(
+        snapshot_path,
+        [Add(MeanAmount(0), CountTotal(0))],
+        [(0.8, 0.8, 0.8, 1.0)],
+        minimize=(False, False, False, True),
+        mapping_ref=SNAPSHOT_MAPPING_REFERENCE,
+    )
+
+    with pytest.raises(ValueError, match="run-level mapping"):
+        load_snapshot(snapshot_path, None)
+
+
+def test_snapshot_rejects_missing_or_malformed_mapping_ref(tmp_path):
+    snapshot_path = tmp_path / "snapshots" / "generation_000000.json"
+    snapshot_path.parent.mkdir(parents=True)
+    document = build_snapshot_document(
+        [Add(MeanAmount(0), CountTotal(0))],
+        [(0.8, 0.8, 0.8, 1.0)],
+        minimize=(False, False, False, True),
+        mapping_ref=SNAPSHOT_MAPPING_REFERENCE,
+    )
+    del document["mapping_ref"]
+    snapshot_path.write_text(json.dumps(document))
+
+    with pytest.raises(ValueError, match="mapping_ref"):
+        load_snapshot(snapshot_path, LABEL_MAPPING)
+
+    document["mapping_ref"] = {"file": "manifest.json"}
+    snapshot_path.write_text(json.dumps(document))
+    with pytest.raises(ValueError, match="'file' and 'source' keys"):
+        load_snapshot(snapshot_path, LABEL_MAPPING)
+
+    document["mapping_ref"] = {"file": "", "source": "run_manifest"}
+    snapshot_path.write_text(json.dumps(document))
+    with pytest.raises(ValueError, match="non-empty string"):
+        load_snapshot(snapshot_path, LABEL_MAPPING)
+
+
+def test_snapshot_rejects_unsupported_version_and_unknown_format(tmp_path):
+    snapshot_path = tmp_path / "snapshots" / "generation_000000.json"
+    snapshot_path.parent.mkdir(parents=True)
+    document = build_snapshot_document(
+        [Add(MeanAmount(0), CountTotal(0))],
+        [(0.8, 0.8, 0.8, 1.0)],
+        minimize=(False, False, False, True),
+        mapping_ref=SNAPSHOT_MAPPING_REFERENCE,
+    )
+    document["version"] = 999
+    snapshot_path.write_text(json.dumps(document))
+    with pytest.raises(ValueError, match="Unsupported snapshot version"):
+        load_snapshot(snapshot_path, LABEL_MAPPING)
+
+    document["version"] = archive_module.SNAPSHOT_FORMAT_VERSION
+    document["format"] = "other-format"
+    snapshot_path.write_text(json.dumps(document))
+    with pytest.raises(ValueError, match="Unknown snapshot format"):
+        load_snapshot(snapshot_path, LABEL_MAPPING)
+
+
+def test_snapshot_rejects_an_incomplete_run_level_mapping(tmp_path):
+    snapshot_path = tmp_path / "snapshots" / "generation_000000.json"
+    write_snapshot(
+        snapshot_path,
+        [Add(MeanAmount(0), CountTotal(0))],
+        [(0.8, 0.8, 0.8, 1.0)],
+        minimize=(False, False, False, True),
+        mapping_ref=SNAPSHOT_MAPPING_REFERENCE,
+    )
+
+    incomplete = {"status": {"approved": 0}}
+    with pytest.raises(ValueError, match="cannot resolve snapshot expressions"):
+        load_snapshot(snapshot_path, incomplete)
+
+
+def test_snapshot_writes_are_atomic(tmp_path, monkeypatch):
+    replaced = []
+    original_replace = os.replace
+
+    def recording_replace(source, destination):
+        replaced.append((Path(source).name, Path(destination).name))
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(archive_module.os, "replace", recording_replace)
+    snapshot_path = tmp_path / "snapshots" / "generation_000000.json"
+    write_snapshot(
+        snapshot_path,
+        [Add(MeanAmount(0), CountTotal(0))],
+        [(0.8, 0.8, 0.8, 1.0)],
+        minimize=(False, False, False, True),
+        mapping_ref=SNAPSHOT_MAPPING_REFERENCE,
+    )
+
+    assert len(replaced) == 1
+    assert replaced[0][0].startswith(".generation_000000.json.")
+    assert replaced[0][0].endswith(".tmp")
+    assert list(tmp_path.glob("*.tmp")) == []
+    load_snapshot(snapshot_path, LABEL_MAPPING)

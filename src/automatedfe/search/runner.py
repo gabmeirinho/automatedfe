@@ -25,6 +25,7 @@ from typing import Any, TextIO
 
 from geneticengine.evaluation.budget import TimeBudget
 
+from ..analysis.artifacts import CANDIDATES_COLUMNS
 from ..data.transaction_materialization import DEFAULT_MMAP_DIR
 from ..evaluation.final_evaluation import (
     AdditiveEvaluationResult,
@@ -61,20 +62,7 @@ _EVALUATED_STRATEGIES = frozenset(
     }
 )
 
-DIAGNOSTIC_COLUMNS = (
-    "Strategy",
-    "CandidateIndex",
-    "Generation",
-    "Expression",
-    "Dependencies",
-    "Split1",
-    "Split2",
-    "Split3",
-    "MaterializationTime",
-    "ArchiveMember",
-    "Status",
-    "Error",
-)
+DIAGNOSTIC_COLUMNS = CANDIDATES_COLUMNS
 
 
 class RunnerDiagnosticsRecorder:

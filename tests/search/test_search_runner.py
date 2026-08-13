@@ -7,6 +7,10 @@ import pytest
 
 import automatedfe.search.runner as runner_module
 import automatedfe.search.search as shared_search_module
+from automatedfe.analysis.artifacts import (
+    CANDIDATES_COLUMNS,
+    load_run_manifest,
+)
 from automatedfe.search.archive import load_archive
 from automatedfe.search.runner import (
     DIAGNOSTIC_COLUMNS,
@@ -41,6 +45,10 @@ class _FinalEvaluator:
             models=(),
             expressions=tuple(expressions),
         )
+
+
+def test_diagnostics_columns_follow_the_analysis_candidates_schema():
+    assert DIAGNOSTIC_COLUMNS == CANDIDATES_COLUMNS
 
 
 def test_evaluation_free_runner_writes_common_generated_rows(tmp_path, monkeypatch):
@@ -445,3 +453,32 @@ def test_active_runner_persists_history_and_active_snapshot(tmp_path, monkeypatc
     assert saved["active"][0] == active_path.resolve()
     assert saved["history"][1] == LABEL_MAPPING
     assert saved["active"][1] == LABEL_MAPPING
+
+
+def test_loose_runner_outputs_are_not_structured_runs(tmp_path, monkeypatch):
+    class StubMaterializer:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+    monkeypatch.setattr(runner_module, "FeatureMaterializer", StubMaterializer)
+    monkeypatch.setattr(
+        runner_module,
+        "_build_final_evaluator",
+        lambda *_args, **_kwargs: _FinalEvaluator([]),
+    )
+    csv_path = tmp_path / "diagnostics.csv"
+
+    run_feature_search(
+        "enumerative_without_archive",
+        candidate_count=1,
+        dataset_path=tmp_path / "dataset.parquet",
+        mapping=LABEL_MAPPING,
+        mmap_dir=tmp_path / "mmap",
+        csv_path=csv_path,
+    )
+
+    assert csv_path.is_file()
+    assert not any(tmp_path.rglob("manifest.json"))
+    assert not any(tmp_path.rglob("*.sha256"))
+    with pytest.raises(ValueError, match="Not a structured run"):
+        load_run_manifest(tmp_path)
