@@ -61,6 +61,7 @@ from .feature_spec import (
 from .feature_types import TxFeature
 from .final_evaluation import (
     ARCHIVE_MINIMIZE,
+    AdditiveEvaluationResult,
     TEST_SPLIT,
     ArchiveSource,
     FinalEvaluationResult,
@@ -74,6 +75,9 @@ from .fitness import (
     RandomForestFitness,
     ResidualEvaluator,
     ResidualFitness,
+    logit,
+    logit_working_response,
+    sigmoid,
 )
 from .grammar import (
     NON_TERMINALS,
@@ -196,6 +200,7 @@ __all__ = [
     "ActiveSetManager",
     "ActiveResidualEvaluator",
     "ActiveResidualFitness",
+    "AdditiveEvaluationResult",
     "ArithmeticOp",
     "AvgDailyAmount",
     "AvgDailyAmountCategory",
@@ -226,6 +231,9 @@ __all__ = [
     "RateAgg",
     "ResidualEvaluator",
     "ResidualFitness",
+    "logit",
+    "logit_working_response",
+    "sigmoid",
     "RowWindow",
     "RunnerDiagnosticsRecorder",
     "SafeDiv",

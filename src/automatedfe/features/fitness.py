@@ -57,11 +57,28 @@ def _sigmoid(scores: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-bounded))
 
 
+def sigmoid(scores: np.ndarray) -> np.ndarray:
+    """Convert log-odds to probabilities using the residual evaluator bounds.
+
+    This public spelling is shared by search-time and final additive residual
+    evaluation.  Keeping the clipping in one place prevents the two paths
+    from diverging for very large logit values.
+    """
+
+    return _sigmoid(scores)
+
+
 def _logit(probability: float) -> float:
     probability = float(
         np.clip(probability, RESIDUAL_EPSILON, 1.0 - RESIDUAL_EPSILON)
     )
     return float(np.log(probability / (1.0 - probability)))
+
+
+def logit(probability: float) -> float:
+    """Convert a probability to a safely clipped log-odds value."""
+
+    return _logit(probability)
 
 
 def _logit_working_response(
@@ -82,6 +99,15 @@ def _logit_working_response(
     )
     responses = (np.asarray(labels, dtype=np.float64) - probabilities) / weights
     return responses, weights
+
+
+def logit_working_response(
+    labels: np.ndarray,
+    scores: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the residual-tree response and curvature weights."""
+
+    return _logit_working_response(labels, scores)
 
 
 def _load_ordered_events(
@@ -662,6 +688,9 @@ __all__ = [
     "RESIDUAL_TREE_PARAMS",
     "ResidualEvaluator",
     "ResidualFitness",
+    "logit",
+    "logit_working_response",
+    "sigmoid",
     "TRAIN_SPLIT",
     "objectives_are_finite",
 ]

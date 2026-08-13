@@ -10,6 +10,7 @@ from geneticengine.solutions.individual import ConcreteIndividual
 from sklearn.ensemble import RandomForestClassifier
 
 from automatedfe.features import (
+    AdditiveEvaluationResult,
     ArchiveSnapshot,
     ArchiveStep,
     FeatureMaterializer,
@@ -163,6 +164,30 @@ def test_final_evaluator_rejects_empty_feature_set(tmp_path):
 
     with pytest.raises(ValueError, match="At least one individual"):
         evaluator.evaluate([])
+
+
+def test_final_evaluator_scores_active_rf_and_additive_paths(tmp_path):
+    dataset_path = tmp_path / "dataset.parquet"
+    write_train_test_dataset(dataset_path)
+    feature = TxFeature("mean", "amount", 1, "row")
+
+    evaluator = FinalEvaluator(build_materializer(12), dataset_path)
+    active_rf = evaluator.evaluate_active_set([feature])
+    additive = evaluator.evaluate_additive_ensemble([feature])
+
+    assert active_rf is not None
+    assert active_rf.model.n_estimators == 500
+    assert active_rf.model.max_depth == 10
+    assert active_rf.model.min_samples_leaf == 2
+    assert isinstance(additive, AdditiveEvaluationResult)
+    assert set(additive.metrics) == {"train_auc", "test_auc"}
+    assert additive.train_predictions.shape == (12,)
+    assert additive.test_predictions.shape == (4,)
+    assert additive.train_auc == pytest.approx(0.5)
+    assert additive.test_auc == pytest.approx(0.5)
+
+    assert evaluator.evaluate_active_set([]) is None
+    assert evaluator.evaluate_additive_ensemble([]) is None
 
 
 def test_final_evaluator_requires_two_classes_in_test_split(tmp_path):
