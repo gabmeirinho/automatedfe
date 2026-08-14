@@ -65,6 +65,16 @@ from .artifacts import (
     write_run_manifest,
     write_status,
 )
+from .run_tables import (
+    CORRELATIONS_FILENAME,
+    FEATURES_FILENAME,
+    FinalEvaluationTables,
+    IMPORTANCES_FILENAME,
+    METRICS_FILENAME,
+    TIMINGS_FILENAME,
+    read_final_evaluation_tables,
+    write_final_evaluation_tables,
+)
 
 PARTIAL_DIRECTORY: Final[str] = "partial"
 STAGING_MARKER_FILENAME: Final[str] = ".run-bundle-staging"
@@ -192,6 +202,7 @@ class RunBundle:
     generations: tuple[dict[str, str], ...]
     snapshots: tuple[dict[str, object], ...]
     final_archive: dict[str, object] | None
+    evaluation: FinalEvaluationTables | None
 
     @property
     def run_id(self) -> str:
@@ -255,6 +266,7 @@ class RunBundleWriter:
         self.force = force
         self.partial_directory = partial_directory
         self.lifecycle: Any | None = None
+        self._evaluation_artifacts: dict[str, str] | None = None
         self._published_path: Path | None = None
         self._closed = False
 
@@ -371,6 +383,25 @@ class RunBundleWriter:
             raise TypeError("final archive document must be a JSON object")
         return _json_document(path, value)
 
+    def write_evaluation_tables(self, tables: FinalEvaluationTables) -> dict[str, str]:
+        """Persist model-free final-evaluation tables in staging."""
+
+        self._ensure_open()
+        if not isinstance(tables, FinalEvaluationTables):
+            raise TypeError("tables must be a FinalEvaluationTables instance")
+        self._evaluation_artifacts = write_final_evaluation_tables(
+            self.staging_dir,
+            tables,
+        )
+        return dict(self._evaluation_artifacts)
+
+    def write_evaluation(self, evaluation: object) -> dict[str, str]:
+        """Persist diagnostics from a final evaluation without model state."""
+
+        from .run_tables import build_final_evaluation_tables
+
+        return self.write_evaluation_tables(build_final_evaluation_tables(evaluation))
+
     def write_lifecycle(
         self,
         lifecycle: Any,
@@ -419,6 +450,11 @@ class RunBundleWriter:
             final_path = self.staging_dir / FINAL_ARCHIVE_FILENAME
             if state != "search_complete" and final_path.exists():
                 final_path.unlink()
+            if state != "search_complete":
+                evaluation_directory = self.staging_dir / "evaluation"
+                if evaluation_directory.exists():
+                    shutil.rmtree(evaluation_directory)
+                self._evaluation_artifacts = None
             if lifecycle is not None:
                 self.write_lifecycle(
                     lifecycle,
@@ -477,6 +513,11 @@ class RunBundleWriter:
             ),
             "archive_snapshots": snapshot_paths,
             "status": _relative_artifact(self.staging_dir / RUN_STATUS_FILENAME, self.staging_dir),
+            "evaluation": (
+                dict(self._evaluation_artifacts)
+                if self._evaluation_artifacts is not None
+                else None
+            ),
         }
         artifact_fingerprints: dict[str, dict[str, object]] = {}
         for path in self._artifact_files(artifacts):
@@ -513,6 +554,13 @@ class RunBundleWriter:
         snapshots = artifacts.get("archive_snapshots", ())
         if isinstance(snapshots, list):
             paths.extend(self.staging_dir / value for value in snapshots if isinstance(value, str))
+        evaluation = artifacts.get("evaluation")
+        if isinstance(evaluation, Mapping):
+            paths.extend(
+                self.staging_dir / value
+                for value in evaluation.values()
+                if isinstance(value, str)
+            )
         return tuple(paths)
 
     def _publish_path(self, state: str) -> Path:
@@ -794,6 +842,45 @@ def _load_run_bundle(
         raise RunBundleValidationError(
             f"Partial bundle must not contain a final archive: {final_name}"
         )
+    evaluation: FinalEvaluationTables | None = None
+    evaluation_artifacts = artifacts.get("evaluation")
+    if evaluation_artifacts is not None:
+        if not isinstance(evaluation_artifacts, Mapping):
+            raise RunBundleValidationError(
+                "Bundle artifact 'evaluation' must be an object or null"
+            )
+        for name, relative in (
+            ("features", FEATURES_FILENAME),
+            ("metrics", METRICS_FILENAME),
+            ("importances", IMPORTANCES_FILENAME),
+            ("correlations", CORRELATIONS_FILENAME),
+            ("timings", TIMINGS_FILENAME),
+        ):
+            try:
+                _safe_manifest_relative_path(
+                    root,
+                    evaluation_artifacts.get(name),
+                    f"evaluation.{name}",
+                )
+            except RunBundleValidationError as error:
+                raise RunBundleValidationError(str(error)) from error
+            if evaluation_artifacts.get(name) != relative:
+                raise RunBundleValidationError(
+                    f"Bundle artifact evaluation.{name!s} must be {relative!r}"
+                )
+        try:
+            evaluation = read_final_evaluation_tables(
+                root,
+                evaluation_artifacts,
+            )
+        except (OSError, ValueError) as error:
+            raise RunBundleValidationError(
+                f"Invalid bundle artifact 'evaluation': {error}"
+            ) from error
+        if status["state"] in {"search_failed", "interrupted"}:
+            raise RunBundleValidationError(
+                "Partial bundle must not contain final evaluation tables"
+            )
     if status["state"] in {"search_failed", "interrupted"} and (
         root / "report.html"
     ).exists():
@@ -806,6 +893,7 @@ def _load_run_bundle(
         generations=generations,
         snapshots=tuple(snapshots),
         final_archive=final_archive,
+        evaluation=evaluation,
     )
 
 

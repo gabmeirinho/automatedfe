@@ -438,8 +438,32 @@ def _build_final_evaluator(
     materializer: FeatureMaterializer,
     dataset_path: str | PathLike[str],
     mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None,
+    *,
+    random_state: int = DEFAULT_RANDOM_STATE,
 ) -> FinalEvaluator:
-    return FinalEvaluator(materializer, dataset_path, mapping=mapping)
+    return FinalEvaluator(
+        materializer,
+        dataset_path,
+        mapping=mapping,
+        random_state=random_state,
+    )
+
+
+def _evaluate_final_archive(
+    evaluator: Any,
+    expressions: Sequence[expr],
+    objectives: tuple[tuple[float, ...], ...] | None,
+) -> Any:
+    """Evaluate the archive once, attaching its search-fold diagnostics."""
+
+    if isinstance(evaluator, FinalEvaluator):
+        return evaluator.evaluate(
+            expressions,
+            search_fold_scores=objectives,
+        )
+    # Keep the runner's small compatibility seam usable by callers and tests
+    # that provide a historical evaluator double without the new keyword.
+    return evaluator.evaluate(expressions)
 
 
 def _empty_archive_error(
@@ -699,9 +723,25 @@ def _run_feature_search_impl(
             manager.save_active_snapshot(resolved_active_archive_path, mapping=mapping)
 
     final_started_ns = monotonic_ns()
-    final_evaluator = _build_final_evaluator(materializer, dataset_path, mapping)
-    final_evaluation = final_evaluator.evaluate(expressions)
+    final_evaluator = _build_final_evaluator(
+        materializer,
+        dataset_path,
+        mapping,
+        random_state=seed,
+    )
+    final_evaluation = _evaluate_final_archive(
+        final_evaluator,
+        expressions,
+        objectives,
+    )
     final_evaluation_duration_seconds = (monotonic_ns() - final_started_ns) * 1e-9
+
+    if (
+        _bundle_writer is not None
+        and isinstance(final_evaluation, FinalEvaluationResult)
+        and final_evaluation.diagnostics is not None
+    ):
+        _bundle_writer.write_evaluation(final_evaluation)
 
     active_set_final_evaluation: FinalEvaluationResult | None = None
     active_set_final_evaluation_duration_seconds: float | None = None
@@ -709,7 +749,13 @@ def _run_feature_search_impl(
     additive_evaluation_duration_seconds: float | None = None
     if active_mode and active_set_expressions:
         active_started_ns = monotonic_ns()
-        active_set_final_evaluation = final_evaluator.evaluate(active_set_expressions)
+        if isinstance(final_evaluator, FinalEvaluator):
+            active_set_final_evaluation = final_evaluator.evaluate(
+                active_set_expressions,
+                include_diagnostics=False,
+            )
+        else:
+            active_set_final_evaluation = final_evaluator.evaluate(active_set_expressions)
         active_set_final_evaluation_duration_seconds = (
             monotonic_ns() - active_started_ns
         ) * 1e-9
