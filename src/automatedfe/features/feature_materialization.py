@@ -418,9 +418,22 @@ class FeatureMaterializer:
     ) -> np.ndarray:
         """Materialize an individual at each event row."""
 
-        return self.materialize_for_events_with_duration(
+        event_merchants = np.asarray(event_merchants, dtype=np.int64)
+        event_timestamps = np.asarray(event_timestamps, dtype=np.int64)
+        values, duration = self.materialize_for_events_with_duration(
             individual, event_merchants, event_timestamps
-        )[0]
+        )
+        # Keep the duration available even for compatible subclasses or test
+        # doubles that override the duration-returning method without using
+        # the internal event cache.
+        cache_key = (_individual_name(individual), id(event_merchants), id(event_timestamps))
+        self._event_cache[cache_key] = (
+            event_merchants,
+            event_timestamps,
+            np.asarray(values),
+            float(duration),
+        )
+        return values
 
     def materialize_for_events_with_duration(
         self,
@@ -452,6 +465,28 @@ class FeatureMaterializer:
             duration,
         )
         return values, duration
+
+    def event_materialization_duration(
+        self,
+        individual: TxFeature | Any,
+        event_merchants: np.ndarray,
+        event_timestamps: np.ndarray,
+    ) -> float | None:
+        """Return the retained original duration for one event materialization.
+
+        This is intentionally a read-only accessor.  It lets final
+        evaluation report computation duration rather than the latency of a
+        later cache read, without requiring callers to materialize a feature
+        a second time.
+        """
+
+        event_merchants = np.asarray(event_merchants, dtype=np.int64)
+        event_timestamps = np.asarray(event_timestamps, dtype=np.int64)
+        cache_key = (_individual_name(individual), id(event_merchants), id(event_timestamps))
+        cached = self._event_cache.get(cache_key)
+        if cached is None:
+            return None
+        return float(cached[3])
 
 
 def materialize_individual(

@@ -12,8 +12,14 @@ from automatedfe.analysis.run_bundle import (
     load_run_bundle,
     write_run_bundle,
 )
+from automatedfe.evaluation.final_evaluation import FinalEvaluator
 from automatedfe.features.grammar import MeanAmount
 from automatedfe.search.archive import build_snapshot_document
+
+from tests.evaluation.test_final_evaluation import (
+    build_materializer,
+    write_train_test_dataset,
+)
 
 
 MAPPING = {
@@ -58,6 +64,7 @@ def test_complete_bundle_publishes_atomically_and_reopens(tmp_path):
     bundle = write_run_bundle(
         tmp_path / "run",
         strategy="enumerative",
+        configuration={"time_budget_seconds": 60.0, "candidate_count": None},
         dataset_path=dataset,
         mapping=MAPPING,
         mmap_dir=mmap_dir,
@@ -70,6 +77,10 @@ def test_complete_bundle_publishes_atomically_and_reopens(tmp_path):
     assert bundle.final_archive is not None
     assert "mapping" not in bundle.snapshots[0]
     assert bundle.manifest["inputs"]["mapping"]["mapping"] == MAPPING
+    assert bundle.manifest["configuration"] == {
+        "time_budget_seconds": 60.0,
+        "candidate_count": None,
+    }
     assert load_run_bundle(bundle.path).state == "search_complete"
     assert not list(tmp_path.glob(".*.staging"))
 
@@ -127,3 +138,38 @@ def test_failed_write_cleans_only_exact_staging_directory(tmp_path):
 
     assert not writer.staging_dir.exists()
     assert (unrelated / "keep.txt").read_text(encoding="utf-8") == "keep"
+
+
+def test_complete_bundle_persists_final_evaluation_tables_without_model_state(tmp_path):
+    dataset, mmap_dir = _inputs(tmp_path)
+    write_train_test_dataset(dataset)
+    result = FinalEvaluator(
+        build_materializer(12),
+        dataset,
+        n_estimators=5,
+        max_samples=None,
+        n_jobs=1,
+    ).evaluate(
+        [MeanAmount(1)],
+        search_fold_scores=((0.1, 0.2, 0.3, 0.01),),
+    )
+    writer = RunBundleWriter(
+        tmp_path / "run-with-evaluation",
+        strategy="enumerative",
+        dataset_path=dataset,
+        mapping=MAPPING,
+        mmap_dir=mmap_dir,
+    )
+    writer.write_evaluation(result)
+    bundle = writer.finalize("search_complete", lifecycle=_lifecycle())
+
+    assert bundle.evaluation is not None
+    assert len(bundle.evaluation.features) == 1
+    assert bundle.evaluation.metrics["roc_auc"] == result.metrics["roc_auc"]
+    text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (bundle.path / value for value in bundle.manifest["artifacts"]["evaluation"].values())
+    )
+    assert "model" not in text
+    assert "predictions" not in text
+    assert "accuracy" not in text

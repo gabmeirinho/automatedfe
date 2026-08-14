@@ -16,6 +16,7 @@ import csv
 import hashlib
 import io
 import json
+import math
 import os
 import tempfile
 from collections.abc import Mapping, Sequence
@@ -262,6 +263,7 @@ def build_run_manifest(
     created_at_utc: str,
     inputs: Mapping[str, object],
     artifacts: Mapping[str, object],
+    configuration: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Build a schema-versioned run manifest document."""
 
@@ -274,6 +276,8 @@ def build_run_manifest(
         "inputs": {key: dict(value) for key, value in inputs.items()},
         "artifacts": {key: value for key, value in artifacts.items()},
     }
+    if configuration is not None:
+        document["configuration"] = dict(configuration)
     return _validate_run_manifest(document)
 
 
@@ -301,6 +305,9 @@ def _validate_run_manifest(data: object) -> dict[str, object]:
         raise TypeError("Run manifest is missing its 'inputs' object")
     if not isinstance(artifacts, dict):
         raise TypeError("Run manifest is missing its 'artifacts' object")
+    configuration = data.get("configuration")
+    if configuration is not None:
+        _validate_run_configuration(configuration, strategy=data["strategy"])
     for name in _FINGERPRINT_REQUIRED_INPUT_KEYS:
         if not isinstance(inputs.get(name), dict):
             raise TypeError(
@@ -312,6 +319,41 @@ def _validate_run_manifest(data: object) -> dict[str, object]:
                 f"Run manifest artifacts are missing their {name!r} entry"
             )
     return data
+
+
+def _validate_run_configuration(configuration: object, *, strategy: str) -> None:
+    if not isinstance(configuration, dict):
+        raise TypeError("Run manifest 'configuration' must be an object")
+    for name in ("time_budget_seconds", "candidate_count"):
+        if name not in configuration:
+            raise TypeError(
+                f"Run manifest configuration is missing its {name!r} field"
+            )
+
+    time_budget = configuration["time_budget_seconds"]
+    candidate_count = configuration["candidate_count"]
+    valid_time_budget = (
+        isinstance(time_budget, (int, float))
+        and not isinstance(time_budget, bool)
+        and math.isfinite(time_budget)
+        and time_budget > 0
+    )
+    valid_candidate_count = (
+        isinstance(candidate_count, int)
+        and not isinstance(candidate_count, bool)
+        and candidate_count > 0
+    )
+    if strategy == "enumerative_without_archive":
+        if time_budget is not None or not valid_candidate_count:
+            raise ValueError(
+                "enumerative_without_archive requires a positive candidate_count "
+                "and no time_budget_seconds"
+            )
+    elif not valid_time_budget or candidate_count is not None:
+        raise ValueError(
+            "evaluated strategies require a positive time_budget_seconds and no "
+            "candidate_count"
+        )
 
 
 def _valid_fingerprint(value: object) -> bool:

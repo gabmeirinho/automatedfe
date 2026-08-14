@@ -65,6 +65,16 @@ from .artifacts import (
     write_run_manifest,
     write_status,
 )
+from .run_tables import (
+    CORRELATIONS_FILENAME,
+    FEATURES_FILENAME,
+    FinalEvaluationTables,
+    IMPORTANCES_FILENAME,
+    METRICS_FILENAME,
+    TIMINGS_FILENAME,
+    read_final_evaluation_tables,
+    write_final_evaluation_tables,
+)
 
 PARTIAL_DIRECTORY: Final[str] = "partial"
 STAGING_MARKER_FILENAME: Final[str] = ".run-bundle-staging"
@@ -81,8 +91,10 @@ class RunBundleValidationError(RunBundleError):
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace(
-        "+00:00", "Z"
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
     )
 
 
@@ -168,7 +180,9 @@ def _resolve_mapping_argument(
     if isinstance(mapping, (str, PathLike)):
         return load_label_mapping(_as_resolved_path(mapping))
     if not isinstance(mapping, Mapping):
-        raise TypeError(f"mapping must be a JSON object or a path, got {type(mapping).__name__}")
+        raise TypeError(
+            f"mapping must be a JSON object or a path, got {type(mapping).__name__}"
+        )
     return mapping
 
 
@@ -192,6 +206,7 @@ class RunBundle:
     generations: tuple[dict[str, str], ...]
     snapshots: tuple[dict[str, object], ...]
     final_archive: dict[str, object] | None
+    evaluation: FinalEvaluationTables | None
 
     @property
     def run_id(self) -> str:
@@ -234,6 +249,7 @@ class RunBundleWriter:
         mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None = None,
         mmap_dir: str | PathLike[str] | None = None,
         inputs: Mapping[str, Mapping[str, object]] | None = None,
+        configuration: Mapping[str, object] | None = None,
         created_at_utc: str | None = None,
         force: bool = False,
         partial_directory: str = PARTIAL_DIRECTORY,
@@ -244,17 +260,24 @@ class RunBundleWriter:
             raise ValueError("force must be a boolean")
         if not isinstance(partial_directory, str) or not partial_directory:
             raise ValueError("partial_directory must be a non-empty string")
-        if Path(partial_directory).name != partial_directory or partial_directory in {".", ".."}:
+        if Path(partial_directory).name != partial_directory or partial_directory in {
+            ".",
+            "..",
+        }:
             raise ValueError("partial_directory must be a single safe directory name")
         self.destination = _as_resolved_path(destination)
         self.run_id = run_id or self.destination.name
         if not isinstance(self.run_id, str) or not self.run_id:
             raise ValueError("run_id must be a non-empty string")
         self.strategy = strategy
+        self.configuration = (
+            dict(configuration) if configuration is not None else None
+        )
         self.created_at_utc = created_at_utc or _utc_now()
         self.force = force
         self.partial_directory = partial_directory
         self.lifecycle: Any | None = None
+        self._evaluation_artifacts: dict[str, str] | None = None
         self._published_path: Path | None = None
         self._closed = False
 
@@ -263,9 +286,13 @@ class RunBundleWriter:
                 f"Refusing to overwrite existing run bundle without force=True: {self.destination}"
             )
         if self.destination.exists() and not self.destination.is_dir():
-            raise ValueError(f"Bundle destination must be a directory: {self.destination}")
+            raise ValueError(
+                f"Bundle destination must be a directory: {self.destination}"
+            )
         if self.destination.is_symlink():
-            raise ValueError(f"Bundle destination must not be a symbolic link: {self.destination}")
+            raise ValueError(
+                f"Bundle destination must not be a symbolic link: {self.destination}"
+            )
 
         self._staging_parent = self.destination.parent
         self._staging_parent.mkdir(parents=True, exist_ok=True)
@@ -278,9 +305,13 @@ class RunBundleWriter:
         try:
             if inputs is None:
                 if dataset_path is None:
-                    raise ValueError("dataset_path is required when inputs are not supplied")
+                    raise ValueError(
+                        "dataset_path is required when inputs are not supplied"
+                    )
                 if mmap_dir is None:
-                    raise ValueError("mmap_dir is required when inputs are not supplied")
+                    raise ValueError(
+                        "mmap_dir is required when inputs are not supplied"
+                    )
                 resolved_mapping = _resolve_mapping_argument(mapping)
                 inputs = {
                     "dataset": build_dataset_record(dataset_path),
@@ -295,7 +326,9 @@ class RunBundleWriter:
             # complete staging directory.
             write_status(
                 self.staging_dir,
-                build_status(run_id=self.run_id, state="running", updated_at_utc=_utc_now()),
+                build_status(
+                    run_id=self.run_id, state="running", updated_at_utc=_utc_now()
+                ),
             )
             self._write_input_records()
         except BaseException:
@@ -327,15 +360,21 @@ class RunBundleWriter:
             raise ValueError("Bundle input record 'mmap_manifest' fingerprint mismatch")
         dataset = result["dataset"]
         if dataset.get("fingerprint") is None or dataset.get("bytes") is None:
-            raise ValueError("Bundle input record 'dataset' is missing fingerprint metadata")
+            raise ValueError(
+                "Bundle input record 'dataset' is missing fingerprint metadata"
+            )
         return result
 
     def _write_input_records(self) -> None:
-        _copy_json_record(self.staging_dir / DATASET_RECORD_FILENAME, self.inputs["dataset"])
+        _copy_json_record(
+            self.staging_dir / DATASET_RECORD_FILENAME, self.inputs["dataset"]
+        )
         # The manifest is the authoritative run-level mapping.  The input
         # record is still emitted for a portable, named input artifact and is
         # checked against that same record when the bundle is reopened.
-        _copy_json_record(self.staging_dir / MAPPING_RECORD_FILENAME, self.inputs["mapping"])
+        _copy_json_record(
+            self.staging_dir / MAPPING_RECORD_FILENAME, self.inputs["mapping"]
+        )
         _copy_json_record(
             self.staging_dir / MMAP_MANIFEST_RECORD_FILENAME,
             self.inputs["mmap_manifest"],
@@ -354,7 +393,9 @@ class RunBundleWriter:
         path = archive_snapshot_path(self.staging_dir, generation)
         return _json_document(path, dict(document))
 
-    def write_final_archive(self, document: Mapping[str, object] | str | PathLike[str]) -> Path:
+    def write_final_archive(
+        self, document: Mapping[str, object] | str | PathLike[str]
+    ) -> Path:
         self._ensure_open()
         path = self.staging_dir / FINAL_ARCHIVE_FILENAME
         if isinstance(document, (str, PathLike)):
@@ -364,12 +405,43 @@ class RunBundleWriter:
             try:
                 value = json.loads(source.read_text(encoding="utf-8"))
             except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-                raise RunBundleError(f"Final archive is not valid JSON: {source}: {error}") from error
+                raise RunBundleError(
+                    f"Final archive is not valid JSON: {source}: {error}"
+                ) from error
         else:
             value = dict(document)
         if not isinstance(value, Mapping):
             raise TypeError("final archive document must be a JSON object")
         return _json_document(path, value)
+
+    def write_evaluation_tables(self, tables: FinalEvaluationTables) -> dict[str, str]:
+        """Persist model-free final-evaluation tables in staging."""
+
+        self._ensure_open()
+        if not isinstance(tables, FinalEvaluationTables):
+            raise TypeError("tables must be a FinalEvaluationTables instance")
+        self._evaluation_artifacts = write_final_evaluation_tables(
+            self.staging_dir,
+            tables,
+        )
+        return dict(self._evaluation_artifacts)
+
+    def write_evaluation(
+        self,
+        evaluation: object,
+        *,
+        search_fold_metric: str | None = None,
+    ) -> dict[str, str]:
+        """Persist diagnostics from a final evaluation without model state."""
+
+        from .run_tables import build_final_evaluation_tables
+
+        return self.write_evaluation_tables(
+            build_final_evaluation_tables(
+                evaluation,
+                search_fold_metric=search_fold_metric,
+            )
+        )
 
     def write_lifecycle(
         self,
@@ -419,6 +491,11 @@ class RunBundleWriter:
             final_path = self.staging_dir / FINAL_ARCHIVE_FILENAME
             if state != "search_complete" and final_path.exists():
                 final_path.unlink()
+            if state != "search_complete":
+                evaluation_directory = self.staging_dir / "evaluation"
+                if evaluation_directory.exists():
+                    shutil.rmtree(evaluation_directory)
+                self._evaluation_artifacts = None
             if lifecycle is not None:
                 self.write_lifecycle(
                     lifecycle,
@@ -463,20 +540,39 @@ class RunBundleWriter:
         self,
         state: str,
     ) -> dict[str, object]:
-        snapshot_paths = sorted(
-            _relative_artifact(path, self.staging_dir)
-            for path in (self.staging_dir / ARCHIVE_SNAPSHOTS_DIRECTORY).glob("generation_*.json")
-            if path.is_file()
-        ) if (self.staging_dir / ARCHIVE_SNAPSHOTS_DIRECTORY).is_dir() else []
+        snapshot_paths = (
+            sorted(
+                _relative_artifact(path, self.staging_dir)
+                for path in (self.staging_dir / ARCHIVE_SNAPSHOTS_DIRECTORY).glob(
+                    "generation_*.json"
+                )
+                if path.is_file()
+            )
+            if (self.staging_dir / ARCHIVE_SNAPSHOTS_DIRECTORY).is_dir()
+            else []
+        )
         final_path = self.staging_dir / FINAL_ARCHIVE_FILENAME
         artifacts: dict[str, object] = {
-            "candidates": _relative_artifact(self.staged_candidates_path, self.staging_dir),
-            "generations": _relative_artifact(self.staged_generations_path, self.staging_dir),
+            "candidates": _relative_artifact(
+                self.staged_candidates_path, self.staging_dir
+            ),
+            "generations": _relative_artifact(
+                self.staged_generations_path, self.staging_dir
+            ),
             "final_archive": (
-                _relative_artifact(final_path, self.staging_dir) if final_path.is_file() else None
+                _relative_artifact(final_path, self.staging_dir)
+                if final_path.is_file()
+                else None
             ),
             "archive_snapshots": snapshot_paths,
-            "status": _relative_artifact(self.staging_dir / RUN_STATUS_FILENAME, self.staging_dir),
+            "status": _relative_artifact(
+                self.staging_dir / RUN_STATUS_FILENAME, self.staging_dir
+            ),
+            "evaluation": (
+                dict(self._evaluation_artifacts)
+                if self._evaluation_artifacts is not None
+                else None
+            ),
         }
         artifact_fingerprints: dict[str, dict[str, object]] = {}
         for path in self._artifact_files(artifacts):
@@ -491,6 +587,7 @@ class RunBundleWriter:
             created_at_utc=self.created_at_utc,
             inputs=self.inputs,
             artifacts=artifacts,
+            configuration=self.configuration,
         )
         manifest["state"] = state
         manifest["bundle_format"] = RUN_BUNDLE_FORMAT
@@ -512,7 +609,18 @@ class RunBundleWriter:
             paths.append(self.staging_dir / final_archive)
         snapshots = artifacts.get("archive_snapshots", ())
         if isinstance(snapshots, list):
-            paths.extend(self.staging_dir / value for value in snapshots if isinstance(value, str))
+            paths.extend(
+                self.staging_dir / value
+                for value in snapshots
+                if isinstance(value, str)
+            )
+        evaluation = artifacts.get("evaluation")
+        if isinstance(evaluation, Mapping):
+            paths.extend(
+                self.staging_dir / value
+                for value in evaluation.values()
+                if isinstance(value, str)
+            )
         return tuple(paths)
 
     def _publish_path(self, state: str) -> Path:
@@ -530,10 +638,17 @@ class RunBundleWriter:
                     f"Refusing to overwrite existing run bundle without force=True: {publish_path}"
                 )
             if not publish_path.is_dir():
-                raise ValueError(f"Bundle destination must be a directory: {publish_path}")
+                raise ValueError(
+                    f"Bundle destination must be a directory: {publish_path}"
+                )
             if publish_path.is_symlink():
-                raise ValueError(f"Bundle destination must not be a symbolic link: {publish_path}")
-            backup = publish_path.parent / f".{publish_path.name}.{uuid.uuid4().hex}.replaced"
+                raise ValueError(
+                    f"Bundle destination must not be a symbolic link: {publish_path}"
+                )
+            backup = (
+                publish_path.parent
+                / f".{publish_path.name}.{uuid.uuid4().hex}.replaced"
+            )
             os.replace(publish_path, backup)
             try:
                 os.replace(self.staging_dir, publish_path)
@@ -549,7 +664,9 @@ class RunBundleWriter:
         if self._closed:
             raise RunBundleError("Run bundle writer is already finalized")
         if not self.staging_dir.is_dir():
-            raise RunBundleError(f"Run bundle staging directory is unavailable: {self.staging_dir}")
+            raise RunBundleError(
+                f"Run bundle staging directory is unavailable: {self.staging_dir}"
+            )
 
     def cleanup(self) -> None:
         """Remove only this writer's exact, marker-bearing staging directory."""
@@ -615,7 +732,9 @@ def _validate_input_files(root: Path, manifest: Mapping[str, object]) -> None:
         path = _safe_manifest_relative_path(root, relative, f"inputs/{name}")
         data = _read_json(path, f"inputs/{name}")
         if not isinstance(data, Mapping):
-            raise RunBundleValidationError(f"Input artifact {name!r} is not a JSON object")
+            raise RunBundleValidationError(
+                f"Input artifact {name!r} is not a JSON object"
+            )
         if canonical_json_text(data) != canonical_json_text(inputs[name]):
             raise RunBundleValidationError(
                 f"Input artifact {name!r} does not match the run manifest record"
@@ -680,11 +799,15 @@ def _load_run_bundle(
         if should_validate_dataset:
             manifest = load_run_manifest(root, validate_dataset=True)
     except (OSError, TypeError, ValueError) as error:
-        raise RunBundleValidationError(f"Invalid run manifest {root / RUN_MANIFEST_FILENAME}: {error}") from error
+        raise RunBundleValidationError(
+            f"Invalid run manifest {root / RUN_MANIFEST_FILENAME}: {error}"
+        ) from error
     try:
         status = load_status(root)
     except (OSError, TypeError, ValueError) as error:
-        raise RunBundleValidationError(f"Invalid bundle artifact {RUN_STATUS_FILENAME!r}: {error}") from error
+        raise RunBundleValidationError(
+            f"Invalid bundle artifact {RUN_STATUS_FILENAME!r}: {error}"
+        ) from error
     if status["run_id"] != manifest["run_id"]:
         raise RunBundleValidationError(
             f"Status artifact run_id {status['run_id']!r} does not match manifest run_id {manifest['run_id']!r}"
@@ -709,28 +832,42 @@ def _load_run_bundle(
                 f"Bundle artifact {artifact_name!r} must be {expected_path!r}"
             )
 
-    candidates_path = _safe_manifest_relative_path(root, artifacts.get("candidates"), "candidates")
-    generations_path = _safe_manifest_relative_path(root, artifacts.get("generations"), "generations")
+    candidates_path = _safe_manifest_relative_path(
+        root, artifacts.get("candidates"), "candidates"
+    )
+    generations_path = _safe_manifest_relative_path(
+        root, artifacts.get("generations"), "generations"
+    )
     try:
         candidates = tuple(read_candidates_csv(candidates_path))
     except (OSError, ValueError) as error:
-        raise RunBundleValidationError(f"Invalid bundle artifact 'candidates': {error}") from error
+        raise RunBundleValidationError(
+            f"Invalid bundle artifact 'candidates': {error}"
+        ) from error
     try:
         generations = tuple(read_generations_csv(generations_path))
     except (OSError, ValueError) as error:
-        raise RunBundleValidationError(f"Invalid bundle artifact 'generations': {error}") from error
+        raise RunBundleValidationError(
+            f"Invalid bundle artifact 'generations': {error}"
+        ) from error
 
     snapshot_names = artifacts.get("archive_snapshots")
     if not isinstance(snapshot_names, list):
-        raise RunBundleValidationError("Bundle artifact 'archive_snapshots' must be a list")
+        raise RunBundleValidationError(
+            "Bundle artifact 'archive_snapshots' must be a list"
+        )
     mapping = manifest["inputs"]["mapping"]["mapping"]  # type: ignore[index]
     snapshots: list[dict[str, object]] = []
     snapshot_generations: list[int] = []
     for index, relative in enumerate(snapshot_names):
-        snapshot_path = _safe_manifest_relative_path(root, relative, f"archive_snapshots[{index}]")
+        snapshot_path = _safe_manifest_relative_path(
+            root, relative, f"archive_snapshots[{index}]"
+        )
         document = _read_json(snapshot_path, f"archive_snapshots[{index}]")
         if not isinstance(document, dict):
-            raise RunBundleValidationError(f"Invalid bundle artifact 'archive_snapshots[{index}]': not an object")
+            raise RunBundleValidationError(
+                f"Invalid bundle artifact 'archive_snapshots[{index}]': not an object"
+            )
         if document.get("mapping_ref") != SNAPSHOT_MAPPING_REFERENCE:
             raise RunBundleValidationError(
                 f"Invalid bundle artifact 'archive_snapshots[{index}]': mapping_ref does not resolve the run manifest"
@@ -754,7 +891,9 @@ def _load_run_bundle(
                 f"Invalid bundle artifact 'archive_snapshots[{index}]': invalid generation name"
             )
     if snapshot_generations != sorted(snapshot_generations):
-        raise RunBundleValidationError("Bundle archive snapshots are not in generation order")
+        raise RunBundleValidationError(
+            "Bundle archive snapshots are not in generation order"
+        )
 
     final_archive: dict[str, object] | None = None
     final_name = artifacts.get("final_archive")
@@ -762,7 +901,9 @@ def _load_run_bundle(
         final_path = _safe_manifest_relative_path(root, final_name, "final_archive")
         document = _read_json(final_path, "final_archive")
         if not isinstance(document, dict):
-            raise RunBundleValidationError("Invalid bundle artifact 'final_archive': not an object")
+            raise RunBundleValidationError(
+                "Invalid bundle artifact 'final_archive': not an object"
+            )
         try:
             if document.get("format") == "automatedfe-archive-snapshot":
                 if document.get("mapping_ref") != SNAPSHOT_MAPPING_REFERENCE:
@@ -773,7 +914,9 @@ def _load_run_bundle(
             else:
                 load_archive(final_path, mapping=mapping)
         except (OSError, TypeError, ValueError) as error:
-            raise RunBundleValidationError(f"Invalid bundle artifact 'final_archive': {error}") from error
+            raise RunBundleValidationError(
+                f"Invalid bundle artifact 'final_archive': {error}"
+            ) from error
         final_archive = document
         if snapshots and document.get("format") == "automatedfe-archive-snapshot":
             if canonical_json_text(document) != canonical_json_text(snapshots[-1]):
@@ -790,13 +933,56 @@ def _load_run_bundle(
             "Missing bundle artifact 'final_archive' for a completed evaluated run"
         )
 
-    if status["state"] in {"search_failed", "interrupted"} and final_archive is not None:
+    if (
+        status["state"] in {"search_failed", "interrupted"}
+        and final_archive is not None
+    ):
         raise RunBundleValidationError(
             f"Partial bundle must not contain a final archive: {final_name}"
         )
-    if status["state"] in {"search_failed", "interrupted"} and (
-        root / "report.html"
-    ).exists():
+    evaluation: FinalEvaluationTables | None = None
+    evaluation_artifacts = artifacts.get("evaluation")
+    if evaluation_artifacts is not None:
+        if not isinstance(evaluation_artifacts, Mapping):
+            raise RunBundleValidationError(
+                "Bundle artifact 'evaluation' must be an object or null"
+            )
+        for name, relative in (
+            ("features", FEATURES_FILENAME),
+            ("metrics", METRICS_FILENAME),
+            ("importances", IMPORTANCES_FILENAME),
+            ("correlations", CORRELATIONS_FILENAME),
+            ("timings", TIMINGS_FILENAME),
+        ):
+            try:
+                _safe_manifest_relative_path(
+                    root,
+                    evaluation_artifacts.get(name),
+                    f"evaluation.{name}",
+                )
+            except RunBundleValidationError as error:
+                raise RunBundleValidationError(str(error)) from error
+            if evaluation_artifacts.get(name) != relative:
+                raise RunBundleValidationError(
+                    f"Bundle artifact evaluation.{name!s} must be {relative!r}"
+                )
+        try:
+            evaluation = read_final_evaluation_tables(
+                root,
+                evaluation_artifacts,
+            )
+        except (OSError, ValueError) as error:
+            raise RunBundleValidationError(
+                f"Invalid bundle artifact 'evaluation': {error}"
+            ) from error
+        if status["state"] in {"search_failed", "interrupted"}:
+            raise RunBundleValidationError(
+                "Partial bundle must not contain final evaluation tables"
+            )
+    if (
+        status["state"] in {"search_failed", "interrupted"}
+        and (root / "report.html").exists()
+    ):
         raise RunBundleValidationError("Partial bundle must not contain 'report.html'")
     return RunBundle(
         path=root,
@@ -806,6 +992,7 @@ def _load_run_bundle(
         generations=generations,
         snapshots=tuple(snapshots),
         final_archive=final_archive,
+        evaluation=evaluation,
     )
 
 
@@ -868,6 +1055,7 @@ def write_run_bundle(
     mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None = None,
     mmap_dir: str | PathLike[str] | None = None,
     inputs: Mapping[str, Mapping[str, object]] | None = None,
+    configuration: Mapping[str, object] | None = None,
     run_id: str | None = None,
     lifecycle: Any | None = None,
     state: str = "search_complete",
@@ -884,6 +1072,7 @@ def write_run_bundle(
         mapping=mapping,
         mmap_dir=mmap_dir,
         inputs=inputs,
+        configuration=configuration,
         run_id=run_id,
         force=force,
     )
