@@ -825,13 +825,14 @@ class ArchiveStep(GeneticStep):
     2. removes invalid and duplicate expressions;
     3. combines the candidates with the previous archive;
     4. delegates front calculation to Genetic Engine's ``non_dominated``; and
-    5. stores the resulting global front.
+    5. appends current candidates that are present on the resulting global
+       front, retaining every previously admitted archive member.
 
     Every evaluated population member is yielded unchanged so this step can be
     appended to a Genetic Engine ``SequenceStep`` without changing evolution.
 
-    When *archive_path* is provided, an atomic JSON snapshot of the current
-    front is written after every generation. *mapping* supplies the label
+    When *archive_path* is provided, an atomic JSON snapshot of the permanent
+    archive is written after every generation. *mapping* supplies the label
     mapping embedded in those snapshots; it defaults to the persisted
     preprocessing mapping.
     """
@@ -874,7 +875,16 @@ class ArchiveStep(GeneticStep):
         current = self._valid_unique(evaluated, problem)
         candidates = self._deduplicate([*self.archive, *current])
 
-        self.archive = list(non_dominated(iter(candidates), problem))
+        front = list(non_dominated(iter(candidates), problem))
+        front_keys = {self._expression_key(individual) for individual in front}
+        archive_keys = {
+            self._expression_key(individual) for individual in self.archive
+        }
+        for individual in current:
+            key = self._expression_key(individual)
+            if key in front_keys and key not in archive_keys:
+                self.archive.append(individual)
+                archive_keys.add(key)
         if self.archive_path is not None:
             self.save(self.archive_path)
         yield from evaluated
@@ -906,10 +916,10 @@ class ArchiveStep(GeneticStep):
         *,
         mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None = None,
     ) -> Path:
-        """Write an atomic JSON snapshot of the current archive front.
+        """Write an atomic JSON snapshot of the permanent archive.
 
-        Only the current strict Pareto front is saved. *mapping* defaults to
-        the mapping configured for the step, then to the persisted default.
+        *mapping* defaults to the mapping configured for the step, then to the
+        persisted default.
         """
 
         save_path = self._resolve_save_path(path)

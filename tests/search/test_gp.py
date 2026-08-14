@@ -370,7 +370,7 @@ def test_dataset_search_uses_one_archive_step_and_returns_initial_archive(
     assert len(result) == algorithm.population_size
 
 
-def test_archive_path_persists_the_final_front(tmp_path, archive_dataset):
+def test_archive_path_persists_the_final_archive(tmp_path, archive_dataset):
     archive_path = tmp_path / "archive" / "front.json"
     algorithm = build_search_algorithm(
         EvaluationBudget(4),
