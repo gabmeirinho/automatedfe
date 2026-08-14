@@ -8,11 +8,7 @@ evaluate the resulting feature set on the held-out split.
 
 from __future__ import annotations
 
-import contextlib
-import json
 import math
-import os
-import shutil
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -25,8 +21,9 @@ from typing import Any
 
 from geneticengine.evaluation.budget import TimeBudget
 
-from ..analysis.artifacts import CANDIDATES_COLUMNS, CANDIDATES_FILENAME
+from ..analysis.artifacts import CANDIDATES_COLUMNS
 from ..analysis.run_bundle import RunBundleWriter
+from ..analysis.run_report import render_run_report
 from ..data.transaction_materialization import DEFAULT_MMAP_DIR
 from ..evaluation.final_evaluation import (
     AdditiveEvaluationResult,
@@ -36,11 +33,12 @@ from ..evaluation.final_evaluation import (
 from ..evaluation.fitness import DEFAULT_N_SPLITS, DEFAULT_RANDOM_STATE
 from ..features.feature_materialization import FeatureMaterializer
 from ..features.grammar import expr
-from .lifecycle import SearchLifecycleRecorder
-from .search import canonical_expression_key
+from ..tracking import MlflowRunStore, MlflowStore
 from .enumerative_search import build_enumerative_search
 from .gp import build_search_algorithm
+from .lifecycle import SearchLifecycleRecorder
 from .random_search import build_random_search
+from .search import canonical_expression_key
 from .unbound_enumerative_search import build_unbound_enumerative_search
 
 
@@ -96,49 +94,6 @@ class RunnerDiagnosticsRecorder(SearchLifecycleRecorder):
         return self._candidate_csv_path
 
 
-def _atomic_write_json(path: Path, document: Mapping[str, object]) -> Path:
-    """Write a JSON document through a durable sibling temporary file."""
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    file_descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    try:
-        with os.fdopen(file_descriptor, "w", encoding="utf-8") as output:
-            json.dump(document, output, indent=2, sort_keys=True)
-            output.write("\n")
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary_name, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(temporary_name)
-        raise
-    return path
-
-
-def write_summary_json(
-    path: str | PathLike[str],
-    summary: Mapping[str, object],
-    *,
-    force: bool = False,
-) -> Path:
-    """Atomically persist a runner summary, protecting existing files by default."""
-
-    if not isinstance(force, bool):
-        raise ValueError("force must be a boolean")
-    resolved_path = Path(path).resolve()
-    if resolved_path.exists() and resolved_path.is_dir():
-        raise ValueError(
-            f"Output path must identify a file, not a directory: {resolved_path}"
-        )
-    if resolved_path.exists() and not force:
-        raise FileExistsError(
-            f"Refusing to overwrite existing output without force=True: {resolved_path}"
-        )
-    return _atomic_write_json(resolved_path, summary)
-
-
 @dataclass(frozen=True, slots=True)
 class SearchRunResult:
     """Search diagnostics, selected expressions, and held-out evaluations."""
@@ -162,7 +117,7 @@ class SearchRunResult:
     history_count: int = 0
     active_set_count: int = 0
     lifecycle: SearchLifecycleRecorder | None = None
-    bundle_path: Path | None = None
+    run_id: str | None = None
 
     @property
     def final_metrics(self) -> dict[str, float]:
@@ -809,35 +764,148 @@ def _run_feature_search_impl(
     return result
 
 
-def _select_bundle_destination(
-    run_dir: str | PathLike[str] | None,
-    bundle_path: str | PathLike[str] | None,
-    run_bundle_path: str | PathLike[str] | None,
-) -> Path | None:
-    supplied = [
-        Path(value).resolve()
-        for value in (run_dir, bundle_path, run_bundle_path)
-        if value is not None
-    ]
-    if not supplied:
-        return None
-    if len(set(supplied)) != 1:
-        raise ValueError(
-            "run_dir, bundle_path, and run_bundle_path must identify the same bundle"
+class SearchAnalysisError(RuntimeError):
+    """Automatic analysis failed after the search bundle was completed."""
+
+    def __init__(self, run_id: str, error: BaseException) -> None:
+        super().__init__(f"Automatic analysis failed for MLflow run {run_id}: {error}")
+        self.run_id = run_id
+
+
+_STRATEGY_GROUPS = {
+    SearchStrategy.ENUMERATIVE: "archive_filtered_enumeration",
+    SearchStrategy.RANDOM: "random_search",
+    SearchStrategy.ENUMERATIVE_WITHOUT_ARCHIVE: "unfiltered_enumeration_benchmark",
+}
+
+_GENERATION_METRICS = {
+    "Generated": "generated",
+    "Unique": "unique",
+    "Duplicate": "duplicate",
+    "Invalid": "invalid",
+    "Evaluated": "evaluated",
+    "ArchiveSize": "archive_size",
+    "Added": "added",
+    "Removed": "removed",
+    "DurationSeconds": "generation_duration_seconds",
+    "CumulativeRuntimeSeconds": "cumulative_runtime_seconds",
+}
+
+
+def _strategy_group(strategy: SearchStrategy, *, use_active_set: bool) -> str:
+    if strategy is SearchStrategy.GENETIC:
+        return "cost_effective_gp" if use_active_set else "standard_gp"
+    return _STRATEGY_GROUPS[strategy]
+
+
+def _path_parameter(value: str | PathLike[str] | None) -> str | None:
+    return None if value is None else str(Path(value).expanduser().resolve())
+
+
+def _run_parameters(
+    *,
+    time_budget_seconds: float | None,
+    candidate_count: int | None,
+    dataset_path: str | PathLike[str],
+    mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None,
+    mmap_dir: str | PathLike[str],
+    feature_cache_dir: str | PathLike[str] | None,
+    n_splits: int,
+    score_metric: str,
+    fitness_random_state: int,
+    seed: int,
+    population_size: int,
+    max_depth: int | None,
+    use_active_set: bool,
+    promotion_interval: int,
+    first_promotion_top_k: int,
+    promotion_add_k: int,
+    promotion_refresh_top_n: int,
+    archive_quality_threshold: float,
+    archive_correlation_threshold: float,
+    active_correlation_threshold: float,
+    promotion_min_gain: float,
+    promotion_mean_gain: float,
+    feature_labels: str,
+) -> dict[str, object]:
+    return {
+        "time_budget_seconds": time_budget_seconds,
+        "candidate_count": candidate_count,
+        "dataset_path": _path_parameter(dataset_path),
+        "mapping": (
+            _path_parameter(mapping)
+            if isinstance(mapping, (str, PathLike))
+            else "inline"
+        ),
+        "mmap_dir": _path_parameter(mmap_dir),
+        "feature_cache_dir": _path_parameter(feature_cache_dir),
+        "n_splits": n_splits,
+        "score_metric": score_metric,
+        "fitness_random_state": fitness_random_state,
+        "seed": seed,
+        "population_size": population_size,
+        "max_depth": max_depth,
+        "use_active_set": use_active_set,
+        "promotion_interval": promotion_interval,
+        "first_promotion_top_k": first_promotion_top_k,
+        "promotion_add_k": promotion_add_k,
+        "promotion_refresh_top_n": promotion_refresh_top_n,
+        "archive_quality_threshold": archive_quality_threshold,
+        "archive_correlation_threshold": archive_correlation_threshold,
+        "active_correlation_threshold": active_correlation_threshold,
+        "promotion_min_gain": promotion_min_gain,
+        "promotion_mean_gain": promotion_mean_gain,
+        "feature_labels": feature_labels,
+    }
+
+
+def _log_generation_metrics(
+    store: MlflowRunStore,
+    run_id: str,
+    lifecycle: SearchLifecycleRecorder | None,
+) -> None:
+    if lifecycle is None:
+        return
+    for row in lifecycle.generation_rows:
+        generation = row.get("Generation")
+        if isinstance(generation, bool) or not isinstance(generation, int):
+            continue
+        metrics = {
+            metric_name: row[source_name]
+            for source_name, metric_name in _GENERATION_METRICS.items()
+            if source_name in row
+        }
+        store.log_generation_metrics(run_id, generation, metrics)  # type: ignore[arg-type]
+
+
+def _store_search_failure(
+    store: MlflowRunStore,
+    run_id: str,
+    writer: RunBundleWriter,
+    error: BaseException,
+    *,
+    project_state: str,
+) -> None:
+    """Persist partial diagnostics without masking the execution exception."""
+
+    lifecycle = writer.lifecycle
+    if lifecycle is not None:
+        lifecycle.close()
+    try:
+        partial = writer.finalize(
+            "interrupted" if project_state == "interrupted" else "search_failed",
+            lifecycle=lifecycle,
+            error=error,
         )
-    return supplied[0]
-
-
-def _copy_bundle_candidates(bundle_path: Path, csv_path: Path | None) -> None:
-    """Preserve the legacy loose CSV when structured output is requested."""
-
-    if csv_path is None:
-        return
-    source = bundle_path / CANDIDATES_FILENAME
-    if not source.is_file():
-        return
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, csv_path)
+        store.log_artifact_bundle(run_id, partial.path)
+    except BaseException as storage_error:  # noqa: BLE001 - preserve interrupts too
+        writer.cleanup()
+        if hasattr(error, "add_note"):
+            error.add_note(
+                f"Could not persist partial MLflow artifacts: {storage_error}"
+            )
+    finally:
+        store.terminate_run(run_id, project_state)
 
 
 def run_feature_search(
@@ -865,58 +933,16 @@ def run_feature_search(
     active_correlation_threshold: float = 0.90,
     promotion_min_gain: float = 0.0,
     promotion_mean_gain: float = 0.0005,
-    csv_path: str | PathLike[str] | None = None,
-    archive_path: str | PathLike[str] | None = None,
-    history_path: str | PathLike[str] | None = None,
-    active_archive_path: str | PathLike[str] | None = None,
-    force: bool = False,
-    run_dir: str | PathLike[str] | None = None,
-    bundle_path: str | PathLike[str] | None = None,
-    run_bundle_path: str | PathLike[str] | None = None,
-    run_id: str | None = None,
+    feature_labels: str = "expression",
+    tracking_uri: str | None = None,
+    artifact_root: str | PathLike[str] | None = None,
+    tracking_store: MlflowRunStore | None = None,
 ) -> SearchRunResult:
-    """Run one strategy, optionally publishing a validated structured bundle.
-
-    The bundle arguments are opt-in during Phase 1. Without one of them this
-    function retains the existing loose-output behavior. With one supplied,
-    candidate evidence is staged with the bundle and failures are published
-    under its sibling ``partial/`` directory.
-    """
-
-    destination = _select_bundle_destination(run_dir, bundle_path, run_bundle_path)
-    if destination is None:
-        return _run_feature_search_impl(
-            strategy,
-            time_budget_seconds=time_budget_seconds,
-            candidate_count=candidate_count,
-            dataset_path=dataset_path,
-            mapping=mapping,
-            mmap_dir=mmap_dir,
-            feature_cache_dir=feature_cache_dir,
-            n_splits=n_splits,
-            score_metric=score_metric,
-            fitness_random_state=fitness_random_state,
-            seed=seed,
-            population_size=population_size,
-            max_depth=max_depth,
-            use_active_set=use_active_set,
-            promotion_interval=promotion_interval,
-            first_promotion_top_k=first_promotion_top_k,
-            promotion_add_k=promotion_add_k,
-            promotion_refresh_top_n=promotion_refresh_top_n,
-            archive_quality_threshold=archive_quality_threshold,
-            archive_correlation_threshold=archive_correlation_threshold,
-            active_correlation_threshold=active_correlation_threshold,
-            promotion_min_gain=promotion_min_gain,
-            promotion_mean_gain=promotion_mean_gain,
-            csv_path=csv_path,
-            archive_path=archive_path,
-            history_path=history_path,
-            active_archive_path=active_archive_path,
-            force=force,
-        )
+    """Run, analyze, and persist one canonical MLflow feature-search run."""
 
     selected_strategy = _coerce_strategy(strategy)
+    if feature_labels not in {"id", "expression"}:
+        raise ValueError("feature_labels must be 'id' or 'expression'")
     if not isinstance(use_active_set, bool):
         raise ValueError("use_active_set must be a boolean")
     if use_active_set and selected_strategy is not SearchStrategy.GENETIC:
@@ -928,99 +954,157 @@ def run_feature_search(
         time_budget_seconds=time_budget_seconds,
         candidate_count=candidate_count,
     )
-    _preflight_output_paths(
-        selected_strategy,
-        csv_path=csv_path,
-        archive_path=archive_path,
-        history_path=history_path,
-        active_archive_path=active_archive_path,
-        use_active_set=use_active_set,
-        force=force,
+    if tracking_store is not None and (
+        tracking_uri is not None or artifact_root is not None
+    ):
+        raise ValueError(
+            "tracking_store cannot be combined with tracking_uri or artifact_root"
+        )
+    # This health probe deliberately precedes input fingerprinting and all
+    # dataset, materializer, and search construction.
+    store = tracking_store or MlflowStore(
+        tracking_uri,
+        artifact_root=artifact_root,
     )
-    writer = RunBundleWriter(
-        destination,
-        run_id=run_id,
-        strategy=selected_strategy.value,
+    parameters = _run_parameters(
+        time_budget_seconds=validated_time_budget,
+        candidate_count=validated_candidate_count,
         dataset_path=dataset_path,
         mapping=mapping,
         mmap_dir=mmap_dir,
-        configuration={
-            "time_budget_seconds": validated_time_budget,
-            "candidate_count": validated_candidate_count,
-        },
-        force=force,
+        feature_cache_dir=feature_cache_dir,
+        n_splits=n_splits,
+        score_metric=score_metric,
+        fitness_random_state=fitness_random_state,
+        seed=seed,
+        population_size=population_size,
+        max_depth=max_depth,
+        use_active_set=use_active_set,
+        promotion_interval=promotion_interval,
+        first_promotion_top_k=first_promotion_top_k,
+        promotion_add_k=promotion_add_k,
+        promotion_refresh_top_n=promotion_refresh_top_n,
+        archive_quality_threshold=archive_quality_threshold,
+        archive_correlation_threshold=archive_correlation_threshold,
+        active_correlation_threshold=active_correlation_threshold,
+        promotion_min_gain=promotion_min_gain,
+        promotion_mean_gain=promotion_mean_gain,
+        feature_labels=feature_labels,
     )
-    try:
-        result = _run_feature_search_impl(
-            selected_strategy,
-            time_budget_seconds=time_budget_seconds,
-            candidate_count=candidate_count,
-            dataset_path=dataset_path,
-            mapping=mapping,
-            mmap_dir=mmap_dir,
-            feature_cache_dir=feature_cache_dir,
-            n_splits=n_splits,
-            score_metric=score_metric,
-            fitness_random_state=fitness_random_state,
-            seed=seed,
-            population_size=population_size,
-            max_depth=max_depth,
-            use_active_set=use_active_set,
-            promotion_interval=promotion_interval,
-            first_promotion_top_k=first_promotion_top_k,
-            promotion_add_k=promotion_add_k,
-            promotion_refresh_top_n=promotion_refresh_top_n,
-            archive_quality_threshold=archive_quality_threshold,
-            archive_correlation_threshold=archive_correlation_threshold,
-            active_correlation_threshold=active_correlation_threshold,
-            promotion_min_gain=promotion_min_gain,
-            promotion_mean_gain=promotion_mean_gain,
-            # The lifecycle writes into staging. The legacy CSV is copied
-            # after publication so an interrupted run remains readable too.
-            csv_path=csv_path,
-            archive_path=archive_path,
-            history_path=history_path,
-            active_archive_path=active_archive_path,
-            force=force,
-            _bundle_writer=writer,
-        )
-    except BaseException as error:
-        lifecycle = writer.lifecycle
-        if lifecycle is not None:
-            lifecycle.close()
+    run = store.create_run(
+        selected_strategy.value,
+        seed,
+        parameters=parameters,
+        strategy_group=_strategy_group(
+            selected_strategy, use_active_set=use_active_set
+        ),
+    )
+    run_id = run.info.run_id
+
+    with tempfile.TemporaryDirectory(prefix=f"automatedfe-{run_id}-") as temporary:
         try:
-            partial = writer.finalize(
+            writer = RunBundleWriter(
+                Path(temporary) / run_id,
+                run_id=run_id,
+                strategy=selected_strategy.value,
+                dataset_path=dataset_path,
+                mapping=mapping,
+                mmap_dir=mmap_dir,
+                configuration=parameters,
+            )
+            store.log_fingerprints(run_id, writer.inputs)
+        except BaseException as error:
+            store.terminate_run(
+                run_id,
                 "interrupted"
                 if isinstance(error, KeyboardInterrupt)
                 else "search_failed",
-                lifecycle=lifecycle,
-                error=error,
             )
-            _copy_bundle_candidates(
-                partial.path, Path(csv_path).resolve() if csv_path else None
-            )
-        except BaseException:
-            # Preserve the original search exception. The writer has already
-            # made a best-effort cleanup if partial publication failed.
-            writer.cleanup()
-        raise
+            raise
 
-    lifecycle = result.lifecycle
-    if lifecycle is not None:
-        lifecycle.close()
-    completed = writer.finalize("search_complete", lifecycle=lifecycle)
-    _copy_bundle_candidates(
-        completed.path, Path(csv_path).resolve() if csv_path else None
-    )
-    return replace(result, bundle_path=completed.path)
+        try:
+            result = _run_feature_search_impl(
+                selected_strategy,
+                time_budget_seconds=validated_time_budget,
+                candidate_count=validated_candidate_count,
+                dataset_path=dataset_path,
+                mapping=mapping,
+                mmap_dir=mmap_dir,
+                feature_cache_dir=feature_cache_dir,
+                n_splits=n_splits,
+                score_metric=score_metric,
+                fitness_random_state=fitness_random_state,
+                seed=seed,
+                population_size=population_size,
+                max_depth=max_depth,
+                use_active_set=use_active_set,
+                promotion_interval=promotion_interval,
+                first_promotion_top_k=first_promotion_top_k,
+                promotion_add_k=promotion_add_k,
+                promotion_refresh_top_n=promotion_refresh_top_n,
+                archive_quality_threshold=archive_quality_threshold,
+                archive_correlation_threshold=archive_correlation_threshold,
+                active_correlation_threshold=active_correlation_threshold,
+                promotion_min_gain=promotion_min_gain,
+                promotion_mean_gain=promotion_mean_gain,
+                _bundle_writer=writer,
+            )
+            _log_generation_metrics(store, run_id, result.lifecycle)
+            if result.lifecycle is not None:
+                result.lifecycle.close()
+            completed = writer.finalize("search_complete", lifecycle=result.lifecycle)
+        except BaseException as error:
+            _store_search_failure(
+                store,
+                run_id,
+                writer,
+                error,
+                project_state=(
+                    "interrupted"
+                    if isinstance(error, KeyboardInterrupt)
+                    else "search_failed"
+                ),
+            )
+            raise
+
+        try:
+            render_run_report(completed.path, feature_labels=feature_labels)
+        except KeyboardInterrupt as error:
+            try:
+                store.log_artifact_bundle(run_id, completed.path)
+            except BaseException as storage_error:  # noqa: BLE001
+                error.add_note(
+                    f"Could not persist interrupted MLflow artifacts: {storage_error}"
+                )
+            finally:
+                store.terminate_run(run_id, "interrupted")
+            raise
+        except BaseException as error:
+            try:
+                store.log_artifact_bundle(run_id, completed.path)
+            except BaseException as storage_error:  # noqa: BLE001
+                error.add_note(
+                    f"Could not persist completed search artifacts: {storage_error}"
+                )
+            finally:
+                store.terminate_run(run_id, "analysis_failed")
+            raise SearchAnalysisError(run_id, error) from error
+
+        try:
+            store.log_artifact_bundle(run_id, completed.path)
+        except BaseException:
+            store.terminate_run(run_id, "analysis_failed")
+            raise
+        store.terminate_run(run_id, "complete")
+        return replace(result, run_id=run_id)
 
 
 __all__ = [
     "DIAGNOSTIC_COLUMNS",
     "RunnerDiagnosticsRecorder",
+    "SearchAnalysisError",
     "SearchLifecycleRecorder",
     "SearchRunResult",
     "SearchStrategy",
     "run_feature_search",
-    "write_summary_json",
 ]

@@ -48,10 +48,10 @@ from .features.feature_materialization import (
 from .search.runner import (
     DIAGNOSTIC_COLUMNS,
     RunnerDiagnosticsRecorder,
+    SearchAnalysisError,
     SearchRunResult,
     SearchStrategy,
     run_feature_search,
-    write_summary_json,
 )
 from .search.lifecycle import SearchLifecycleRecorder
 from .evaluation import (
@@ -124,6 +124,7 @@ __all__ = [
     "ResidualEvaluator",
     "ResidualFitness",
     "RunnerDiagnosticsRecorder",
+    "SearchAnalysisError",
     "SearchLifecycleRecorder",
     "SearchRunResult",
     "SearchStrategy",
@@ -149,5 +150,4 @@ __all__ = [
     "sort_transactions",
     "validate_archive_quality_threshold",
     "validate_correlation_threshold",
-    "write_summary_json",
 ]

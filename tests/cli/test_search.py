@@ -1,15 +1,15 @@
-import json
 from types import SimpleNamespace
 
 import pytest
 
 import automatedfe.cli.search as search_cli
 from automatedfe.features.grammar import MeanAmount
-from automatedfe.search.runner import SearchStrategy
+from automatedfe.search import SearchAnalysisError, SearchStrategy
 
 
 def fake_result(strategy=SearchStrategy.ENUMERATIVE_WITHOUT_ARCHIVE):
     return SimpleNamespace(
+        run_id="mlflow-run-123",
         strategy=strategy,
         expressions=(MeanAmount(0), MeanAmount(1)),
         generated_count=2,
@@ -24,9 +24,7 @@ def fake_result(strategy=SearchStrategy.ENUMERATIVE_WITHOUT_ARCHIVE):
     )
 
 
-def test_cli_dispatches_evaluation_free_strategy_and_writes_summary(
-    tmp_path, monkeypatch, capsys
-):
+def test_cli_dispatches_tracked_search_and_prints_run_id(monkeypatch, capsys):
     calls = []
 
     def fake_run(strategy, **kwargs):
@@ -34,50 +32,34 @@ def test_cli_dispatches_evaluation_free_strategy_and_writes_summary(
         return fake_result(strategy)
 
     monkeypatch.setattr(search_cli, "run_feature_search", fake_run)
-    csv_path = tmp_path / "diagnostics.csv"
-    summary_path = tmp_path / "summary.json"
 
-    assert search_cli.main(
-        [
-            "--strategy",
-            "enumerative_without_archive",
-            "--candidate-count",
-            "2",
-            "--csv",
-            str(csv_path),
-            "--summary-json",
-            str(summary_path),
-            "--dataset",
-            str(tmp_path / "dataset.parquet"),
-            "--mapping",
-            str(tmp_path / "mapping.json"),
-        ]
-    ) == 0
+    assert (
+        search_cli.main(
+            [
+                "--strategy",
+                "enumerative_without_archive",
+                "--candidate-count",
+                "2",
+                "--feature-labels",
+                "id",
+                "--tracking-uri",
+                "sqlite:///isolated.db",
+            ]
+        )
+        == 0
+    )
 
     assert calls[0][0] is SearchStrategy.ENUMERATIVE_WITHOUT_ARCHIVE
     assert calls[0][1]["candidate_count"] == 2
     assert calls[0][1]["time_budget_seconds"] is None
-    summary = json.loads(summary_path.read_text())
-    assert summary["strategy"] == "enumerative_without_archive"
-    assert summary["counts"] == {
-        "generated": 2,
-        "evaluated": 0,
-        "invalid": 0,
-        "duplicates": 0,
-    }
-    assert summary["selected_feature_count"] == 2
-    assert summary["final_metrics"] == {"roc_auc": 0.8}
-    assert "objectives" not in summary
-    assert "predictions" not in summary
-    assert "model" not in summary
-    assert "MeanAmount" not in summary
+    assert calls[0][1]["feature_labels"] == "id"
+    assert calls[0][1]["tracking_uri"] == "sqlite:///isolated.db"
     stdout = capsys.readouterr().out
-    assert "Counts:" in stdout
+    assert "Run ID: mlflow-run-123" in stdout
     assert "Final metrics:" in stdout
-    assert str(summary_path.resolve()) in stdout
 
 
-def test_cli_defaults_to_residual_brier_improvement(tmp_path, monkeypatch):
+def test_cli_defaults_to_residual_brier_and_expression_labels(monkeypatch):
     calls = []
 
     def fake_run(strategy, **kwargs):
@@ -85,24 +67,12 @@ def test_cli_defaults_to_residual_brier_improvement(tmp_path, monkeypatch):
         return fake_result(strategy)
 
     monkeypatch.setattr(search_cli, "run_feature_search", fake_run)
-
-    assert search_cli.main(
-        [
-            "--strategy",
-            "enumerative",
-            "--time-budget",
-            "1",
-            "--dataset",
-            str(tmp_path / "dataset.parquet"),
-            "--mapping",
-            str(tmp_path / "mapping.json"),
-        ]
-    ) == 0
-
+    assert search_cli.main(["--strategy", "enumerative", "--time-budget", "1"]) == 0
     assert calls[0][1]["score_metric"] == "brier_improvement"
+    assert calls[0][1]["feature_labels"] == "expression"
 
 
-def test_cli_forwards_active_set_for_genetic_search(tmp_path, monkeypatch):
+def test_cli_forwards_active_set_configuration(monkeypatch):
     calls = []
 
     def fake_run(strategy, **kwargs):
@@ -110,93 +80,7 @@ def test_cli_forwards_active_set_for_genetic_search(tmp_path, monkeypatch):
         return fake_result(strategy)
 
     monkeypatch.setattr(search_cli, "run_feature_search", fake_run)
-
-    assert search_cli.main(
-        [
-            "--strategy",
-            "genetic",
-            "--time-budget",
-            "1",
-            "--use-active-set",
-            "--dataset",
-            str(tmp_path / "dataset.parquet"),
-            "--mapping",
-            str(tmp_path / "mapping.json"),
-        ]
-    ) == 0
-
-    assert calls[0][1]["use_active_set"] is True
-
-
-def test_cli_forwards_active_configuration_and_artifact_paths(tmp_path, monkeypatch):
-    calls = []
-
-    def fake_run(strategy, **kwargs):
-        calls.append((strategy, kwargs))
-        return fake_result(strategy)
-
-    monkeypatch.setattr(search_cli, "run_feature_search", fake_run)
-    history_path = tmp_path / "history.json"
-    active_path = tmp_path / "active.json"
-
-    assert search_cli.main(
-        [
-            "--strategy",
-            "genetic",
-            "--time-budget",
-            "1",
-            "--use-active-set",
-            "--promotion-interval",
-            "7",
-            "--first-promotion-top-k",
-            "3",
-            "--promotion-add-k",
-            "2",
-            "--promotion-refresh-top-n",
-            "0",
-            "--archive-quality-threshold",
-            "0.002",
-            "--archive-correlation-threshold",
-            "0.8",
-            "--active-correlation-threshold",
-            "0.95",
-            "--promotion-min-gain",
-            "-0.1",
-            "--promotion-mean-gain",
-            "0.001",
-            "--history-path",
-            str(history_path),
-            "--active-archive-path",
-            str(active_path),
-        ]
-    ) == 0
-
-    assert calls[0][0] is SearchStrategy.GENETIC
-    kwargs = calls[0][1]
-    assert kwargs["use_active_set"] is True
-    assert kwargs["promotion_interval"] == 7
-    assert kwargs["first_promotion_top_k"] == 3
-    assert kwargs["promotion_add_k"] == 2
-    assert kwargs["promotion_refresh_top_n"] == 0
-    assert kwargs["archive_quality_threshold"] == 0.002
-    assert kwargs["archive_correlation_threshold"] == 0.8
-    assert kwargs["active_correlation_threshold"] == 0.95
-    assert kwargs["promotion_min_gain"] == -0.1
-    assert kwargs["promotion_mean_gain"] == 0.001
-    assert kwargs["history_path"] == history_path
-    assert kwargs["active_archive_path"] == active_path
-
-
-def test_cli_rejects_active_set_with_non_brier_metric_before_dispatch(monkeypatch):
-    called = False
-
-    def fail_if_called(*_args, **_kwargs):
-        nonlocal called
-        called = True
-        raise AssertionError("search should not be dispatched")
-
-    monkeypatch.setattr(search_cli, "run_feature_search", fail_if_called)
-    with pytest.raises(SystemExit) as error:
+    assert (
         search_cli.main(
             [
                 "--strategy",
@@ -204,175 +88,121 @@ def test_cli_rejects_active_set_with_non_brier_metric_before_dispatch(monkeypatc
                 "--time-budget",
                 "1",
                 "--use-active-set",
-                "--score-metric",
-                "brier",
+                "--promotion-interval",
+                "7",
+                "--promotion-add-k",
+                "2",
             ]
         )
-    assert error.value.code == 2
-    assert not called
-
-
-def test_cli_rejects_active_artifact_paths_without_active_set_before_dispatch(
-    monkeypatch, tmp_path
-):
-    called = False
-
-    def fail_if_called(*_args, **_kwargs):
-        nonlocal called
-        called = True
-        raise AssertionError("search should not be dispatched")
-
-    monkeypatch.setattr(search_cli, "run_feature_search", fail_if_called)
-    with pytest.raises(SystemExit) as error:
-        search_cli.main(
-            [
-                "--strategy",
-                "enumerative",
-                "--time-budget",
-                "1",
-                "--history",
-                str(tmp_path / "history.json"),
-            ]
-        )
-    assert error.value.code == 2
-    assert not called
-
-
-def test_active_summary_and_output_handle_empty_active_set(tmp_path, monkeypatch, capsys):
-    summary_path = tmp_path / "summary.json"
-    result = fake_result(SearchStrategy.GENETIC)
-    result.active_set_expressions = ()
-    result.active_set_final_metrics = None
-    result.additive_metrics = None
-    result.history_count = 4
-    result.active_set_count = 0
-    result.active_set_final_evaluation_duration_seconds = None
-    result.additive_evaluation_duration_seconds = None
-
-    monkeypatch.setattr(
-        search_cli,
-        "run_feature_search",
-        lambda strategy, **_kwargs: result,
+        == 0
     )
-
-    assert search_cli.main(
-        [
-            "--strategy",
-            "genetic",
-            "--time-budget",
-            "1",
-            "--use-active-set",
-            "--summary",
-            str(summary_path),
-        ]
-    ) == 0
-
-    summary = json.loads(summary_path.read_text())
-    assert summary["configuration"]["use_active_set"] is True
-    assert summary["counts"]["generated"] == 2
-    assert summary["history_feature_count"] == 4
-    assert summary["active_set_feature_count"] == 0
-    assert summary["active_set_final_metrics"] is None
-    assert summary["additive_metrics"] is None
-    assert summary["timings"]["active_set_final_evaluation_seconds"] is None
-    assert summary["timings"]["additive_evaluation_seconds"] is None
-    assert "Active-set final metrics: none" in capsys.readouterr().out
+    assert calls[0][1]["use_active_set"] is True
+    assert calls[0][1]["promotion_interval"] == 7
+    assert calls[0][1]["promotion_add_k"] == 2
 
 
 @pytest.mark.parametrize(
-    "arguments",
-    [
-        ["--strategy", "enumerative"],
-        ["--strategy", "enumerative", "--candidate-count", "2", "--time-budget", "1"],
-        [
-            "--strategy",
-            "enumerative_without_archive",
-            "--candidate-count",
-            "2",
-            "--time-budget",
-            "1",
-        ],
-        [
-            "--strategy",
-            "enumerative_without_archive",
-            "--candidate-count",
-            "2",
-            "--archive",
-            "archive.json",
-        ],
-    ],
+    "legacy_flag",
+    ["--csv", "--archive", "--history", "--active-archive", "--summary", "--force"],
 )
-def test_cli_rejects_strategy_budget_mismatches(arguments, monkeypatch):
+def test_cli_rejects_legacy_loose_output_flags(monkeypatch, legacy_flag):
     called = False
 
     def fail_if_called(*_args, **_kwargs):
         nonlocal called
         called = True
-        raise AssertionError("search should not be dispatched")
 
     monkeypatch.setattr(search_cli, "run_feature_search", fail_if_called)
-    with pytest.raises(SystemExit) as error:
-        search_cli.main(arguments)
-    assert error.value.code == 2
-    assert not called
-
-
-def test_cli_preflights_summary_before_search(tmp_path, monkeypatch):
-    summary_path = tmp_path / "summary.json"
-    summary_path.write_text("keep")
-    called = False
-
-    def fail_if_called(*_args, **_kwargs):
-        nonlocal called
-        called = True
-        raise AssertionError("search should not be dispatched")
-
-    monkeypatch.setattr(search_cli, "run_feature_search", fail_if_called)
-    with pytest.raises(SystemExit) as error:
+    with pytest.raises(SystemExit) as raised:
         search_cli.main(
             [
                 "--strategy",
                 "enumerative_without_archive",
                 "--candidate-count",
                 "1",
-                "--summary",
-                str(summary_path),
+                legacy_flag,
             ]
         )
-    assert error.value.code == 2
+    assert raised.value.code == 2
     assert not called
-    assert summary_path.read_text() == "keep"
 
 
-def test_cli_force_replaces_summary(tmp_path, monkeypatch):
-    summary_path = tmp_path / "summary.json"
-    summary_path.write_text("old")
+def test_cli_validates_strategy_budget_before_dispatch(monkeypatch):
+    called = False
+
+    def fail_if_called(*_args, **_kwargs):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(search_cli, "run_feature_search", fail_if_called)
+    with pytest.raises(SystemExit) as raised:
+        search_cli.main(["--strategy", "random", "--candidate-count", "1"])
+    assert raised.value.code == 2
+    assert not called
+
+
+def test_cli_returns_nonzero_for_analysis_failure(monkeypatch, capsys):
+    def fail(*_args, **_kwargs):
+        raise SearchAnalysisError("run-analysis", ValueError("plots broke"))
+
+    monkeypatch.setattr(search_cli, "run_feature_search", fail)
+    assert (
+        search_cli.main(
+            [
+                "--strategy",
+                "enumerative_without_archive",
+                "--candidate-count",
+                "1",
+            ]
+        )
+        == 1
+    )
+    assert "run-analysis" in capsys.readouterr().err
+
+
+def test_cli_returns_nonzero_for_search_failure(monkeypatch, capsys):
     monkeypatch.setattr(
         search_cli,
         "run_feature_search",
-        lambda strategy, **_kwargs: fake_result(strategy),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
-
-    search_cli.main(
-        [
-            "--strategy",
-            "enumerative_without_archive",
-            "--candidate-count",
-            "1",
-            "--summary",
-            str(summary_path),
-            "--force",
-        ]
+    assert (
+        search_cli.main(
+            [
+                "--strategy",
+                "enumerative_without_archive",
+                "--candidate-count",
+                "1",
+            ]
+        )
+        == 1
     )
+    assert "Feature search failed: boom" in capsys.readouterr().err
 
-    assert json.loads(summary_path.read_text())["strategy"] == (
-        "enumerative_without_archive"
+
+def test_cli_returns_130_for_keyboard_interrupt(monkeypatch, capsys):
+    monkeypatch.setattr(
+        search_cli,
+        "run_feature_search",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
+    assert (
+        search_cli.main(
+            [
+                "--strategy",
+                "enumerative_without_archive",
+                "--candidate-count",
+                "1",
+            ]
+        )
+        == 130
+    )
+    assert "interrupted" in capsys.readouterr().err
 
 
-def test_both_cli_entry_points_show_the_same_strategy_choices():
-    scripts_help = search_cli.build_parser().format_help()
-    assert "genetic" in scripts_help
-    assert "enumerative" in scripts_help
-    assert "random" in scripts_help
-    assert "enumerative_without_archive" in scripts_help
+def test_cli_help_lists_all_strategies_and_tracked_options():
+    help_text = search_cli.build_parser().format_help()
+    assert "enumerative_without_archive" in help_text
+    assert "--feature-labels" in help_text
+    assert "--tracking-uri" in help_text
+    assert "--summary" not in help_text

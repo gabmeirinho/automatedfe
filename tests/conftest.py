@@ -2,6 +2,19 @@ from datetime import datetime
 
 import duckdb
 import polars as pl
+import pytest
+
+
+@pytest.fixture
+def mlflow_store(tmp_path):
+    """Return an isolated SQLite/artifact-backed tracking repository."""
+
+    from automatedfe.tracking import MlflowStore
+
+    return MlflowStore(
+        f"sqlite:///{tmp_path / 'mlflow.db'}",
+        artifact_root=tmp_path / "artifacts",
+    )
 
 
 def write_transactions_fixture(path):

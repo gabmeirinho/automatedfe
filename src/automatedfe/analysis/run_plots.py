@@ -99,7 +99,10 @@ def generation_iqr(
 def _numeric(frame: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame:
     result = frame.copy()
     for column in columns:
-        result[column] = pd.to_numeric(result[column], errors="coerce")
+        result[column] = pd.to_numeric(
+            result[column] if column in result else pd.Series(dtype=float),
+            errors="coerce",
+        )
     return result
 
 

@@ -34,6 +34,18 @@ _COMMANDS: dict[str, tuple[str, str]] = {
         "automatedfe.cli.search",
         "Run a feature-search strategy",
     ),
+    "analyze": (
+        "automatedfe.cli.analyze",
+        "Retry analysis for a failed tracked run",
+    ),
+    "report": (
+        "automatedfe.cli.report",
+        "Rerender a completed tracked run report",
+    ),
+    "tracking-ui": (
+        "automatedfe.cli.tracking_ui",
+        "Launch the MLflow tracking UI",
+    ),
     "validate": (
         "automatedfe.cli.validate",
         "Run a data validation or diagnostic check",

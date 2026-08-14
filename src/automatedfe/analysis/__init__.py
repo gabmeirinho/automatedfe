@@ -110,8 +110,17 @@ from .run_report import (
     REPORT_SCHEMA_VERSION,
     render_report,
     render_run_report,
+)
+from .run_services import (
+    RunAnalysisError,
+    RunReportError,
+    RunServiceError,
+    RunStateError,
+    analyze_run,
     rerender_run_report,
 )
+
+rerender_tracked_run_report = rerender_run_report
 
 __all__ = [
     "ARCHIVE_SNAPSHOTS_DIRECTORY",
@@ -207,4 +216,10 @@ __all__ = [
     "render_report",
     "render_run_report",
     "rerender_run_report",
+    "RunAnalysisError",
+    "RunReportError",
+    "RunServiceError",
+    "RunStateError",
+    "analyze_run",
+    "rerender_tracked_run_report",
 ]
