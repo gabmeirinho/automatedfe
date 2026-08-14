@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 # ``sorting.py`` now lives one package deeper than it did before the data
 # namespace migration; keep the defaults rooted at the repository checkout.
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_RESULTS_DIR = PROJECT_ROOT / "results"
 DEFAULT_INPUT = PROJECT_ROOT / "data" / "loan" / "transactions.parquet"
 DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "loan" / "transformed" / "transactions.parquet"
 DEFAULT_CARD_TOKENS_INPUT = PROJECT_ROOT / "data" / "loan" / "card_tokens.parquet"

@@ -8,6 +8,7 @@ dependencies = [
     "duckdb>=1.5.5",
     "geneticengine",
     "matplotlib>=3.10",
+    "mlflow>=3.5",
     "numba>=0.66.0",
     "numpy==2.2.6",
     "pandas>=2.2",
