@@ -508,7 +508,7 @@ def test_promotion_boundary_is_called_once_before_generation_evaluation():
     assert archive.refreshes == [(search.problem, search.tracker.evaluator)]
 
 
-def test_archive_is_reevaluated_and_rebuilt_after_baseline_change():
+def test_archive_reevaluation_preserves_membership_after_baseline_change():
     version = {"value": 0}
     scores = {
         0: {
@@ -539,5 +539,8 @@ def test_archive_is_reevaluated_and_rebuilt_after_baseline_change():
     archive.reevaluate_archive(problem, evaluator)
 
     assert evaluator.number_of_evaluations() == 2
-    assert [item.get_phenotype().name for item in archive.archive] == ["b"]
-    assert archive.archive[0].get_fitness(problem).fitness_components == scores[1]["b"]
+    assert [item.get_phenotype().name for item in archive.archive] == ["a", "b"]
+    assert archive.archive == individuals
+    assert [
+        item.get_fitness(problem).fitness_components for item in archive.archive
+    ] == [scores[1]["a"], scores[1]["b"]]

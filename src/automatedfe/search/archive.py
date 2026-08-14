@@ -17,7 +17,7 @@ from typing import Any
 import numpy as np
 from geneticengine.algorithms.gp.structure import GeneticStep
 from geneticengine.evaluation import Evaluator
-from geneticengine.problems import Problem
+from geneticengine.problems import Fitness, Problem
 from geneticengine.problems.helpers import non_dominated
 from geneticengine.random.sources import RandomSource
 from geneticengine.representations.api import Representation
@@ -873,8 +873,19 @@ class ArchiveStep(GeneticStep):
         self._problem = problem
         evaluated = list(evaluator.evaluate(problem, population))
         current = self._valid_unique(evaluated, problem)
-        candidates = self._deduplicate([*self.archive, *current])
+        self._append_archive_admissions(current, problem)
+        if self.archive_path is not None:
+            self.save(self.archive_path)
+        yield from evaluated
 
+    def _append_archive_admissions(
+        self,
+        current: Sequence[PhenotypicIndividual],
+        problem: Problem,
+    ) -> list[PhenotypicIndividual]:
+        """Append current candidates that survive the combined Pareto gate."""
+
+        candidates = self._deduplicate([*self.archive, *current])
         front = list(non_dominated(iter(candidates), problem))
         front_keys = {self._expression_key(individual) for individual in front}
         archive_keys = {
@@ -885,30 +896,59 @@ class ArchiveStep(GeneticStep):
             if key in front_keys and key not in archive_keys:
                 self.archive.append(individual)
                 archive_keys.add(key)
-        if self.archive_path is not None:
-            self.save(self.archive_path)
-        yield from evaluated
+        return front
 
     def reevaluate_archive(
         self,
         problem: Problem,
         evaluator: Evaluator,
     ) -> None:
-        """Re-score the complete archive and rebuild its Pareto front.
+        """Re-score the complete archive without changing membership or order.
 
         This is required when the fitness baseline changes: objective values
         calculated against different baselines must never share a Pareto
         comparison. Fitness is explicitly removed so the refresh does not
-        depend on evaluator-specific cache invalidation.
+        depend on evaluator-specific cache invalidation. If a refresh produces
+        invalid fitness, the member keeps its last finite objective vector so
+        the permanent archive remains serializable.
         """
 
         self._validate_problem(problem)
         self._problem = problem
-        for individual in self.archive:
+        archived = list(self.archive)
+        previous_objectives = {
+            self._expression_key(individual): objectives
+            for individual in archived
+            if (objectives := self._finite_objectives(individual, problem)) is not None
+        }
+        for individual in archived:
             individual.fitness_store.pop(problem, None)
-        evaluated = list(evaluator.evaluate(problem, iter(self.archive)))
+        evaluated = list(evaluator.evaluate(problem, iter(archived)))
         valid = self._valid_unique(evaluated, problem)
-        self.archive = list(non_dominated(iter(valid), problem))
+        refreshed = {
+            self._expression_key(individual): individual for individual in valid
+        }
+
+        for individual in archived:
+            key = self._expression_key(individual)
+            refreshed_individual = refreshed.get(key)
+            if refreshed_individual is not None:
+                if refreshed_individual is not individual:
+                    objectives = self._finite_objectives(refreshed_individual, problem)
+                    assert objectives is not None
+                    individual.set_fitness(
+                        problem,
+                        Fitness(list(objectives), valid=True),
+                    )
+                continue
+
+            objectives = previous_objectives.get(key)
+            if objectives is None:
+                raise ValueError(
+                    "Cannot refresh archive member without finite objective evidence: "
+                    f"{key}"
+                )
+            individual.set_fitness(problem, Fitness(list(objectives), valid=True))
 
     def save(
         self,
@@ -1012,6 +1052,27 @@ class ArchiveStep(GeneticStep):
             valid.append(individual)
         return valid
 
+    @staticmethod
+    def _finite_objectives(
+        individual: PhenotypicIndividual,
+        problem: Problem,
+    ) -> tuple[float, ...] | None:
+        """Return finite valid objectives for an individual, if available."""
+
+        try:
+            fitness = individual.get_fitness(problem)
+            if (
+                not fitness.valid
+                or len(fitness.fitness_components) != problem.number_of_objectives()
+            ):
+                return None
+            objectives = tuple(float(value) for value in fitness.fitness_components)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return None
+        if not all(math.isfinite(value) for value in objectives):
+            return None
+        return objectives
+
     @classmethod
     def _deduplicate(
         cls,
@@ -1055,11 +1116,11 @@ class _ActiveSetManagerBase(ArchiveStep):
     3. greedy same-generation peer clustering, retaining the best candidate in
        each correlated cluster.
 
-    The final ``archive`` remains a global Pareto front, while ``history`` is
-    unbounded, structurally unique, and ordered by admission.  Admission
-    objectives are copied into ``admission_objectives`` so a later evaluator
-    may refresh an individual's live fitness without changing the values that
-    justified history admission.
+    The final ``archive`` retains every candidate admitted by the global
+    Pareto gate, while ``history`` is unbounded, structurally unique, and
+    ordered by admission. Admission objectives are copied into
+    ``admission_objectives`` so a later evaluator may refresh an individual's
+    live fitness without changing the values that justified history admission.
 
     ``signal_provider`` receives a candidate phenotype and must return its
     full training-row signal.
@@ -1541,12 +1602,11 @@ class _ActiveSetManagerBase(ArchiveStep):
         evaluated = list(population_list)
         valid = self._valid_unique_with_diagnostics(evaluated, problem, generation)
 
-        # The public archive keeps the existing global-front semantics.  The
-        # history admission front is deliberately calculated from this
-        # generation alone, as the GP reference admits useful candidates that
-        # may later leave the global final Pareto front.
-        global_candidates = self._deduplicate([*self.archive, *valid])
-        self.archive = list(non_dominated(iter(global_candidates), problem))
+        # The archive admission gate combines historical and current
+        # candidates, while the history admission front is deliberately
+        # calculated from this generation alone. The latter admits useful
+        # candidates that may later leave the global Pareto front.
+        self._append_archive_admissions(valid, problem)
         generation_front = list(non_dominated(iter(valid), problem))
         generation_front_keys = {
             self._expression_key(individual) for individual in generation_front

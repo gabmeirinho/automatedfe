@@ -482,6 +482,47 @@ def test_archive_auto_snapshot_retains_permanent_membership(tmp_path):
     ]
 
 
+def test_invalid_archive_refresh_retains_finite_evidence_and_round_trips(tmp_path):
+    expression = Add(MeanAmount(0), CountTotal(0))
+    objectives = (0.8, 0.8, 0.8, 1.0)
+    problem = make_grammar_problem({str(expression): objectives})
+    step = ArchiveStep(mapping=LABEL_MAPPING)
+    run_archive_step(
+        step,
+        problem,
+        grammar_evaluated_individuals(problem, [expression]),
+    )
+
+    class InvalidRefreshEvaluator:
+        def __init__(self):
+            self.calls = 0
+
+        def evaluate(self, received_problem, candidates):
+            for candidate in candidates:
+                self.calls += 1
+                candidate.set_fitness(
+                    received_problem,
+                    Fitness([float("nan")] * 4, valid=False),
+                )
+                yield candidate
+
+    evaluator = InvalidRefreshEvaluator()
+    step.reevaluate_archive(problem, evaluator)
+
+    assert evaluator.calls == 1
+    assert [str(individual.get_phenotype()) for individual in step.archive] == [
+        str(expression)
+    ]
+    assert step.archive[0].get_fitness(problem).valid is True
+    assert tuple(step.archive[0].get_fitness(problem).fitness_components) == objectives
+
+    archive_path = tmp_path / "archive.json"
+    step.save(archive_path)
+    snapshot = load_archive(archive_path)
+    assert snapshot.expressions == (expression,)
+    assert snapshot.objectives == (objectives,)
+
+
 def test_save_requires_an_evaluated_population(tmp_path):
     step = ArchiveStep(mapping=LABEL_MAPPING)
 
