@@ -68,14 +68,21 @@ def build_run_name(
     strategy: str,
     seed: int,
     *,
+    strategy_group: str | None = None,
+    time_budget_seconds: float | None = None,
+    candidate_count: int | None = None,
     timestamp: datetime | None = None,
 ) -> str:
-    """Build ``{UTC timestamp}_{strategy}_seed{seed}`` for display in MLflow."""
+    """Build a human-readable, collision-resistant MLflow run name."""
 
     if not isinstance(strategy, str) or not strategy.strip():
         raise ValueError("strategy must be a non-empty string")
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise TypeError("seed must be an integer")
+    if strategy_group is not None and (
+        not isinstance(strategy_group, str) or not strategy_group.strip()
+    ):
+        raise ValueError("strategy_group must be a non-empty string")
     current = timestamp or datetime.now(UTC)
     if current.tzinfo is None or current.utcoffset() is None:
         raise ValueError("timestamp must be timezone-aware")
@@ -83,7 +90,22 @@ def build_run_name(
     # Microseconds make names useful to humans during rapid local runs. MLflow's
     # immutable run ID remains the actual collision-proof identity.
     text = utc.strftime("%Y%m%dT%H%M%S.%fZ")
-    return f"{text}_{strategy.strip()}_seed{seed}"
+    run_type = strategy_group or strategy.strip()
+    parts = [run_type, f"seed{seed}"]
+    if time_budget_seconds is not None:
+        if time_budget_seconds <= 0 or not math.isfinite(float(time_budget_seconds)):
+            raise ValueError("time_budget_seconds must be a finite positive number")
+        minutes = float(time_budget_seconds) / 60.0
+        if minutes.is_integer():
+            parts.append(f"{int(minutes)}m")
+        else:
+            parts.append(f"{time_budget_seconds:g}s")
+    elif candidate_count is not None:
+        if isinstance(candidate_count, bool) or candidate_count <= 0:
+            raise ValueError("candidate_count must be a positive integer")
+        parts.append(f"n{candidate_count}")
+    parts.append(text)
+    return "__".join(parts)
 
 
 def _metadata_value(value: object) -> str:
@@ -238,7 +260,18 @@ class MlflowRunStore:
         run = self.client.create_run(
             self.experiment_id,
             tags=run_tags,
-            run_name=build_run_name(strategy, seed, timestamp=timestamp),
+            run_name=build_run_name(
+                strategy,
+                seed,
+                strategy_group=strategy_group,
+                time_budget_seconds=(
+                    parameters.get("time_budget_seconds") if parameters else None
+                ),
+                candidate_count=(
+                    parameters.get("candidate_count") if parameters else None
+                ),
+                timestamp=timestamp,
+            ),
         )
         if parameters:
             try:
