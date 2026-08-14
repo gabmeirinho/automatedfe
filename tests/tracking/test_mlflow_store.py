@@ -99,11 +99,32 @@ def test_tracking_uri_explicit_override_precedes_environment(monkeypatch):
 
 def test_run_name_is_utc_and_run_ids_make_same_name_collision_safe(mlflow_store):
     instant = datetime(2025, 2, 3, 4, 5, 6, 7, tzinfo=timezone(timedelta(hours=2)))
-    expected = "20250203T020506.000007Z_genetic_seed9"
-    assert build_run_name("genetic", 9, timestamp=instant) == expected
+    expected = "cost_effective_gp__seed9__5m__20250203T020506.000007Z"
+    assert (
+        build_run_name(
+            "genetic",
+            9,
+            strategy_group="cost_effective_gp",
+            time_budget_seconds=300,
+            timestamp=instant,
+        )
+        == expected
+    )
 
-    first = mlflow_store.create_run("genetic", 9, timestamp=instant)
-    second = mlflow_store.create_run("genetic", 9, timestamp=instant)
+    first = mlflow_store.create_run(
+        "genetic",
+        9,
+        parameters={"time_budget_seconds": 300},
+        strategy_group="cost_effective_gp",
+        timestamp=instant,
+    )
+    second = mlflow_store.create_run(
+        "genetic",
+        9,
+        parameters={"time_budget_seconds": 300},
+        strategy_group="cost_effective_gp",
+        timestamp=instant,
+    )
     assert first.info.run_name == second.info.run_name == expected
     assert first.info.run_id != second.info.run_id
 
