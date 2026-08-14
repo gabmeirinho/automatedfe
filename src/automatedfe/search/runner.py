@@ -979,6 +979,7 @@ def run_feature_search(
                 _bundle_writer=writer,
             )
             _log_generation_metrics(store, run_id, result.lifecycle)
+            store.log_final_metrics(run_id, result.final_metrics)
             if result.lifecycle is not None:
                 result.lifecycle.close()
             completed = writer.finalize("search_complete", lifecycle=result.lifecycle)

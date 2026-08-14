@@ -139,6 +139,17 @@ def test_create_log_search_and_read_run_metadata(mlflow_store):
     ] == [run.info.run_id]
 
 
+def test_final_metrics_are_logged_as_run_metrics(mlflow_store):
+    run = mlflow_store.create_run("genetic", 17)
+
+    mlflow_store.log_final_metrics(run.info.run_id, {"roc_auc": 0.75})
+    finished = mlflow_store.terminate_run(run.info.run_id, "complete")
+
+    assert finished.data.metrics["roc_auc"] == 0.75
+    history = mlflow_store.client.get_metric_history(run.info.run_id, "roc_auc")
+    assert [(metric.step, metric.value) for metric in history] == [(0, 0.75)]
+
+
 def test_deleted_runs_are_excluded_by_default(mlflow_store):
     run = mlflow_store.create_run("random", 2)
     mlflow_store.delete_run(run.info.run_id)

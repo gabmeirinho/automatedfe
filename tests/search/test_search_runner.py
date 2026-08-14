@@ -907,6 +907,7 @@ def test_public_runner_tracks_analyzes_and_returns_mlflow_id(
     assert run.data.tags["strategy_group"] == "unfiltered_enumeration_benchmark"
     assert run.data.params["feature_labels"] == "id"
     assert run.data.metrics["generated"] == 2
+    assert run.data.metrics["roc_auc"] == 0.75
     assert {item.path for item in mlflow_store.client.list_artifacts(result.run_id)} >= {
         "manifest.json",
         "report.html",

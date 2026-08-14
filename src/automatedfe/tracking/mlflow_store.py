@@ -300,6 +300,30 @@ class MlflowRunStore:
         if values:
             self.client.log_batch(run_id, metrics=values)
 
+    def log_final_metrics(
+        self,
+        run_id: str,
+        metrics: Mapping[str, Real],
+        *,
+        timestamp: datetime | None = None,
+    ) -> None:
+        """Log final evaluation metrics as run-level MLflow metrics."""
+
+        instant = timestamp or datetime.now(UTC)
+        if instant.tzinfo is None or instant.utcoffset() is None:
+            raise ValueError("timestamp must be timezone-aware")
+        timestamp_ms = int(instant.timestamp() * 1000)
+        values: list[Metric] = []
+        for name, value in metrics.items():
+            if isinstance(value, bool) or not isinstance(value, Real):
+                raise TypeError(f"metric {name!r} must be numeric")
+            converted = float(value)
+            if not math.isfinite(converted):
+                raise ValueError(f"metric {name!r} must be finite")
+            values.append(Metric(str(name), converted, timestamp_ms, 0))
+        if values:
+            self.client.log_batch(run_id, metrics=values)
+
     def set_project_state(self, run_id: str, project_state: str) -> None:
         if not isinstance(project_state, str) or not project_state:
             raise ValueError("project_state must be a non-empty string")
