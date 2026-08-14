@@ -805,6 +805,71 @@ def _log_generation_metrics(
         store.log_generation_metrics(run_id, generation, metrics)  # type: ignore[arg-type]
 
 
+def _mlflow_telemetry_metrics(result: SearchRunResult) -> dict[str, float]:
+    """Build non-evaluation metrics for the MLflow comparison view."""
+
+    metrics: dict[str, float] = {}
+    phase_durations = [
+        float(result.search_duration_seconds),
+        float(result.final_evaluation_duration_seconds),
+    ]
+    metrics.update(
+        {
+            "search_duration_seconds": phase_durations[0],
+            "final_evaluation_duration_seconds": phase_durations[1],
+            "total_runtime_seconds": sum(phase_durations),
+            "generated_count": float(result.generated_count),
+            "evaluated_count": float(result.evaluated_count),
+            "invalid_count": float(result.invalid_count),
+            "duplicate_count": float(result.duplicate_count),
+            "selected_feature_count": float(len(result.expressions)),
+        }
+    )
+    total_materialization = getattr(
+        result.final_evaluation,
+        "total_materialization_seconds",
+        None,
+    )
+    if total_materialization is not None:
+        metrics["total_materialization_seconds"] = float(total_materialization)
+    active_metrics = result.active_set_final_metrics
+    if active_metrics is not None:
+        metrics.update(
+            {
+                f"active_set_{name}": float(value)
+                for name, value in active_metrics.items()
+            }
+        )
+        metrics["active_set_feature_count"] = float(result.active_set_count)
+        metrics["history_feature_count"] = float(result.history_count)
+        if result.active_set_final_evaluation_duration_seconds is not None:
+            metrics["active_set_final_evaluation_duration_seconds"] = float(
+                result.active_set_final_evaluation_duration_seconds
+            )
+        phase_durations.append(
+            float(result.active_set_final_evaluation_duration_seconds or 0.0)
+        )
+
+    additive_metrics = result.additive_metrics
+    if additive_metrics is not None:
+        metrics.update(
+            {
+                f"additive_{name}": float(value)
+                for name, value in additive_metrics.items()
+            }
+        )
+        if result.additive_evaluation_duration_seconds is not None:
+            metrics["additive_evaluation_duration_seconds"] = float(
+                result.additive_evaluation_duration_seconds
+            )
+        phase_durations.append(
+            float(result.additive_evaluation_duration_seconds or 0.0)
+        )
+
+    metrics["total_runtime_seconds"] = sum(phase_durations)
+    return metrics
+
+
 def _store_search_failure(
     store: MlflowRunStore,
     run_id: str,
@@ -979,7 +1044,13 @@ def run_feature_search(
                 _bundle_writer=writer,
             )
             _log_generation_metrics(store, run_id, result.lifecycle)
-            store.log_final_metrics(run_id, result.final_metrics)
+            store.log_final_metrics(
+                run_id,
+                {
+                    **result.final_metrics,
+                    **_mlflow_telemetry_metrics(result),
+                },
+            )
             if result.lifecycle is not None:
                 result.lifecycle.close()
             completed = writer.finalize("search_complete", lifecycle=result.lifecycle)

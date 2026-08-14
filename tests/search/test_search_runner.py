@@ -838,7 +838,7 @@ def _tracked_inputs(tmp_path):
     return dataset, mmap_dir
 
 
-def _tracked_result(writer, *, generation=True):
+def _tracked_result(writer, *, generation=True, active=False):
     lifecycle = SearchLifecycleRecorder(strategy="enumerative_without_archive")
     if generation:
         lifecycle.generation_rows.append(
@@ -860,7 +860,10 @@ def _tracked_result(writer, *, generation=True):
     return SearchRunResult(
         strategy=SearchStrategy.ENUMERATIVE_WITHOUT_ARCHIVE,
         expressions=(),
-        final_evaluation=SimpleNamespace(metrics={"roc_auc": 0.75}),
+        final_evaluation=SimpleNamespace(
+            metrics={"roc_auc": 0.75},
+            total_materialization_seconds=1.25,
+        ),
         search_duration_seconds=0.1,
         final_evaluation_duration_seconds=0.2,
         generated_count=2,
@@ -869,8 +872,41 @@ def _tracked_result(writer, *, generation=True):
         duplicate_count=0,
         objectives=None,
         grammar_exhausted=False,
+        active_set_expressions=(MeanAmount(0),) if active else (),
+        active_set_final_evaluation=(
+            SimpleNamespace(metrics={"roc_auc": 0.80}) if active else None
+        ),
+        active_set_final_evaluation_duration_seconds=0.3 if active else None,
+        additive_evaluation=(
+            SimpleNamespace(metrics={"train_auc": 0.81, "test_auc": 0.79})
+            if active
+            else None
+        ),
+        additive_evaluation_duration_seconds=0.4 if active else None,
+        history_count=3 if active else 0,
+        active_set_count=1 if active else 0,
         lifecycle=lifecycle,
     )
+
+
+def test_mlflow_telemetry_metrics_include_active_summaries():
+    result = _tracked_result(
+        SimpleNamespace(),
+        active=True,
+    )
+
+    metrics = runner_module._mlflow_telemetry_metrics(result)
+
+    assert "roc_auc" not in metrics
+    assert metrics["total_materialization_seconds"] == 1.25
+    assert metrics["active_set_roc_auc"] == 0.8
+    assert metrics["active_set_feature_count"] == 1
+    assert metrics["history_feature_count"] == 3
+    assert metrics["additive_train_auc"] == 0.81
+    assert metrics["additive_test_auc"] == 0.79
+    assert metrics["active_set_final_evaluation_duration_seconds"] == 0.3
+    assert metrics["additive_evaluation_duration_seconds"] == 0.4
+    assert metrics["total_runtime_seconds"] == pytest.approx(1.0)
 
 
 def test_public_runner_tracks_analyzes_and_returns_mlflow_id(
@@ -908,6 +944,14 @@ def test_public_runner_tracks_analyzes_and_returns_mlflow_id(
     assert run.data.params["feature_labels"] == "id"
     assert run.data.metrics["generated"] == 2
     assert run.data.metrics["roc_auc"] == 0.75
+    assert run.data.metrics["search_duration_seconds"] == 0.1
+    assert run.data.metrics["final_evaluation_duration_seconds"] == 0.2
+    assert run.data.metrics["total_runtime_seconds"] == pytest.approx(0.3)
+    assert run.data.metrics["generated_count"] == 2
+    assert run.data.metrics["evaluated_count"] == 0
+    assert run.data.metrics["invalid_count"] == 0
+    assert run.data.metrics["duplicate_count"] == 0
+    assert run.data.metrics["selected_feature_count"] == 0
     assert {item.path for item in mlflow_store.client.list_artifacts(result.run_id)} >= {
         "manifest.json",
         "report.html",
