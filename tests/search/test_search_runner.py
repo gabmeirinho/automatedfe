@@ -345,6 +345,57 @@ def test_active_runner_evaluates_archive_and_active_set_separately(
     assert result.additive_evaluation_duration_seconds is not None
 
 
+def test_runner_final_evaluation_uses_complete_canonical_archive(
+    tmp_path,
+    monkeypatch,
+):
+    archive_expressions = (MeanAmount(0), TotalAmount(0))
+    received = []
+
+    class StubArchive:
+        use_active_set = False
+        archive = list(archive_expressions)
+
+    class StubSearch:
+        archive_step = StubArchive()
+        archive = archive_step
+        materializer = object()
+        tracker = SimpleNamespace(
+            start_time=0,
+            get_number_evaluations=lambda: 2,
+            recorders=[],
+        )
+        generated_count = 2
+        invalid_count = 0
+        duplicate_count = 0
+        grammar_exhausted = False
+
+        def search(self):
+            return ["stale-search-result"]
+
+    monkeypatch.setattr(
+        runner_module,
+        "build_enumerative_search",
+        lambda *_args, **_kwargs: StubSearch(),
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "_build_final_evaluator",
+        lambda *_args, **_kwargs: _FinalEvaluator(received),
+    )
+
+    result = run_feature_search(
+        "enumerative",
+        time_budget_seconds=0.001,
+        dataset_path=tmp_path / "dataset.parquet",
+        mapping=LABEL_MAPPING,
+        mmap_dir=tmp_path / "mmap",
+    )
+
+    assert result.expressions == archive_expressions
+    assert received == list(archive_expressions)
+
+
 def test_runner_rejects_history_paths_without_active_set(tmp_path):
     with pytest.raises(ValueError, match="require use_active_set=True"):
         run_feature_search(

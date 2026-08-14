@@ -85,6 +85,41 @@ def test_complete_bundle_publishes_atomically_and_reopens(tmp_path):
     assert not list(tmp_path.glob(".*.staging"))
 
 
+def test_bundle_rejects_non_monotonic_archive_snapshots(tmp_path):
+    dataset, mmap_dir = _inputs(tmp_path)
+    row = {column: "" for column in CANDIDATES_COLUMNS}
+    first = build_snapshot_document(
+        [MeanAmount(0), MeanAmount(1)],
+        [
+            [0.1, 0.2, 0.3, 0.01],
+            [0.2, 0.3, 0.4, 0.02],
+        ],
+        minimize=[False, False, False, True],
+        mapping_ref={"file": "manifest.json", "source": "run_manifest"},
+    )
+    second = build_snapshot_document(
+        [MeanAmount(1)],
+        [[0.2, 0.3, 0.4, 0.02]],
+        minimize=[False, False, False, True],
+        mapping_ref={"file": "manifest.json", "source": "run_manifest"},
+    )
+
+    class Lifecycle:
+        candidate_rows = [row]
+        generation_rows = []
+        snapshot_documents = ((0, first), (1, second))
+
+    with pytest.raises(RunBundleValidationError, match="monotonic"):
+        write_run_bundle(
+            tmp_path / "non-monotonic",
+            strategy="enumerative",
+            dataset_path=dataset,
+            mapping=MAPPING,
+            mmap_dir=mmap_dir,
+            lifecycle=Lifecycle(),
+        )
+
+
 def test_failed_bundle_is_published_under_partial_without_final_archive(tmp_path):
     dataset, mmap_dir = _inputs(tmp_path)
     bundle = write_run_bundle(

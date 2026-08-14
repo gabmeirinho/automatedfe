@@ -981,7 +981,7 @@ class ArchiveStep(GeneticStep):
         return _atomic_write_json(save_path, document)
 
     def archive_snapshot(self) -> dict[str, object]:
-        """Return the current front as a mapping-free structured snapshot.
+        """Return the permanent archive as a mapping-free snapshot.
 
         Structured run snapshots never embed the label mapping: they reference
         the single run-level mapping owned by the run manifest via

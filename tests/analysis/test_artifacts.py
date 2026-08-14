@@ -420,3 +420,16 @@ def test_generations_csv_round_trips_with_schema_validation(tmp_path):
     assert list(loaded[0]) == list(GENERATIONS_COLUMNS)
     assert loaded[0]["Generation"] == "1"
     assert loaded[0]["Added"] == "3"
+
+
+def test_generations_csv_rejects_the_obsolete_removed_column(tmp_path):
+    path = tmp_path / "historical-generations.csv"
+    path.write_text(
+        ",".join((*GENERATIONS_COLUMNS, "Removed")) + "\n"
+        + ",".join("" for _ in (*GENERATIONS_COLUMNS, "Removed"))
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="schema columns"):
+        read_generations_csv(path)

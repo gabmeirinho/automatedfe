@@ -467,6 +467,59 @@ def test_lifecycle_recorder_counts_baseline_refresh_reevaluations():
     assert recorder.candidate_rows[0]["ArchiveMember"] is True
 
 
+def test_lifecycle_snapshots_are_monotonic_and_final_membership_is_complete():
+    expressions = [MeanAmount(0), MeanAmount(1), MeanAmount(2)]
+    objectives = [
+        (0.8, 0.8, 0.8, 1.0),
+        (0.9, 0.7, 0.9, 1.5),
+        (0.9, 0.9, 0.9, 0.5),
+    ]
+    recorder = SearchLifecycleRecorder(strategy="genetic")
+
+    for generation, (expression, values) in enumerate(zip(expressions, objectives)):
+        recorder.on_generation_started(generation)
+        candidate = ConcreteIndividual(expression)
+        recorder.on_candidate_evaluated(
+            candidate,
+            status="evaluated",
+            objectives=values,
+            duration=values[3],
+            error="",
+        )
+        recorder.on_generation_completed(
+            generation,
+            build_snapshot_document(
+                expressions[: generation + 1],
+                objectives[: generation + 1],
+                minimize=(False, False, False, True),
+                mapping_ref=SNAPSHOT_MAPPING_REFERENCE,
+            ),
+        )
+
+    recorder.on_search_completed(
+        canonical_expression_key(expression) for expression in expressions
+    )
+
+    assert [row["ArchiveSize"] for row in recorder.generation_rows] == [1, 2, 3]
+    assert [row["Added"] for row in recorder.generation_rows] == [1, 1, 1]
+    assert [row["ArchiveMember"] for row in recorder.candidate_rows] == [
+        True,
+        True,
+        True,
+    ]
+
+    with pytest.raises(ValueError, match="monotonic"):
+        recorder.on_generation_completed(
+            3,
+            build_snapshot_document(
+                [expressions[-1]],
+                [objectives[-1]],
+                minimize=(False, False, False, True),
+                mapping_ref=SNAPSHOT_MAPPING_REFERENCE,
+            ),
+        )
+
+
 def test_promotion_boundary_is_called_once_before_generation_evaluation():
     class RecordingArchive:
         archive = []
