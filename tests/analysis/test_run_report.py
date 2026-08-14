@@ -108,7 +108,12 @@ def _tables() -> FinalEvaluationTables:
     )
 
 
-def _run_bundle(tmp_path: Path) -> Path:
+def _run_bundle(
+    tmp_path: Path,
+    *,
+    strategy: str = "enumerative",
+    configuration: dict[str, object] | None = None,
+) -> Path:
     dataset = tmp_path / "dataset.parquet"
     dataset.write_bytes(b"persisted dataset fingerprint source")
     mmap_dir = tmp_path / "mmap"
@@ -168,10 +173,12 @@ def _run_bundle(tmp_path: Path) -> Path:
     writer = RunBundleWriter(
         tmp_path / "run",
         run_id="thesis-seed-07",
-        strategy="enumerative",
+        strategy=strategy,
         dataset_path=dataset,
         mapping=MAPPING,
         mmap_dir=mmap_dir,
+        configuration=configuration
+        or {"time_budget_seconds": 120.0, "candidate_count": None},
         created_at_utc="2026-08-14T09:30:00Z",
     )
     writer.write_evaluation_tables(_tables())
@@ -221,8 +228,26 @@ def test_report_contains_figures_tables_metadata_and_caveats(tmp_path, feature_l
     assert "cache read can be faster" in document
     assert "independent optimization objectives" in document
     assert "Held-out ROC AUC" in document
+    assert "<th>Search budget</th><td>120 seconds</td>" in document
+    assert "<th>Budget basis</th><td>Wall-clock search time</td>" in document
     assert "accuracy" in document
     assert "file://" not in document
+
+
+def test_report_identifies_candidate_budget_without_time_budget(tmp_path):
+    run_dir = _run_bundle(
+        tmp_path,
+        strategy="enumerative_without_archive",
+        configuration={"time_budget_seconds": None, "candidate_count": 2500},
+    )
+
+    document = render_run_report(run_dir).read_text(encoding="utf-8")
+
+    assert "<th>Search budget</th><td>2,500 candidates</td>" in document
+    assert (
+        "<th>Budget basis</th><td>Candidate count · enumerative without archive "
+        "(no time budget)</td>" in document
+    )
 
 
 def test_rerender_reads_only_persisted_inputs_and_preserves_nonreport_artifacts(

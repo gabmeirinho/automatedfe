@@ -64,6 +64,7 @@ def test_complete_bundle_publishes_atomically_and_reopens(tmp_path):
     bundle = write_run_bundle(
         tmp_path / "run",
         strategy="enumerative",
+        configuration={"time_budget_seconds": 60.0, "candidate_count": None},
         dataset_path=dataset,
         mapping=MAPPING,
         mmap_dir=mmap_dir,
@@ -76,6 +77,10 @@ def test_complete_bundle_publishes_atomically_and_reopens(tmp_path):
     assert bundle.final_archive is not None
     assert "mapping" not in bundle.snapshots[0]
     assert bundle.manifest["inputs"]["mapping"]["mapping"] == MAPPING
+    assert bundle.manifest["configuration"] == {
+        "time_budget_seconds": 60.0,
+        "candidate_count": None,
+    }
     assert load_run_bundle(bundle.path).state == "search_complete"
     assert not list(tmp_path.glob(".*.staging"))
 

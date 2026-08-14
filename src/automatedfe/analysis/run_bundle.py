@@ -249,6 +249,7 @@ class RunBundleWriter:
         mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None = None,
         mmap_dir: str | PathLike[str] | None = None,
         inputs: Mapping[str, Mapping[str, object]] | None = None,
+        configuration: Mapping[str, object] | None = None,
         created_at_utc: str | None = None,
         force: bool = False,
         partial_directory: str = PARTIAL_DIRECTORY,
@@ -269,6 +270,9 @@ class RunBundleWriter:
         if not isinstance(self.run_id, str) or not self.run_id:
             raise ValueError("run_id must be a non-empty string")
         self.strategy = strategy
+        self.configuration = (
+            dict(configuration) if configuration is not None else None
+        )
         self.created_at_utc = created_at_utc or _utc_now()
         self.force = force
         self.partial_directory = partial_directory
@@ -583,6 +587,7 @@ class RunBundleWriter:
             created_at_utc=self.created_at_utc,
             inputs=self.inputs,
             artifacts=artifacts,
+            configuration=self.configuration,
         )
         manifest["state"] = state
         manifest["bundle_format"] = RUN_BUNDLE_FORMAT
@@ -1050,6 +1055,7 @@ def write_run_bundle(
     mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None = None,
     mmap_dir: str | PathLike[str] | None = None,
     inputs: Mapping[str, Mapping[str, object]] | None = None,
+    configuration: Mapping[str, object] | None = None,
     run_id: str | None = None,
     lifecycle: Any | None = None,
     state: str = "search_complete",
@@ -1066,6 +1072,7 @@ def write_run_bundle(
         mapping=mapping,
         mmap_dir=mmap_dir,
         inputs=inputs,
+        configuration=configuration,
         run_id=run_id,
         force=force,
     )

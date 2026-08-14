@@ -923,7 +923,7 @@ def run_feature_search(
         raise ValueError("use_active_set is supported only by the genetic strategy")
     if use_active_set and score_metric != "brier_improvement":
         raise ValueError("use_active_set requires score_metric='brier_improvement'")
-    _validate_budget_contract(
+    validated_time_budget, validated_candidate_count = _validate_budget_contract(
         selected_strategy,
         time_budget_seconds=time_budget_seconds,
         candidate_count=candidate_count,
@@ -944,6 +944,10 @@ def run_feature_search(
         dataset_path=dataset_path,
         mapping=mapping,
         mmap_dir=mmap_dir,
+        configuration={
+            "time_budget_seconds": validated_time_budget,
+            "candidate_count": validated_candidate_count,
+        },
         force=force,
     )
     try:

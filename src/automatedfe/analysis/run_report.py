@@ -11,6 +11,7 @@ import tempfile
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from datetime import UTC, datetime
 from os import PathLike
 from pathlib import Path
@@ -164,6 +165,28 @@ def _fingerprint(value: object) -> str:
     return _escape(text[:18] + "…" + text[-10:] if len(text) > 34 else text)
 
 
+def _budget_summary(manifest: Mapping[str, object]) -> tuple[str, str]:
+    configuration = manifest.get("configuration")
+    if not isinstance(configuration, Mapping):
+        return "Not recorded in this bundle", "Unavailable"
+
+    if manifest.get("strategy") == "enumerative_without_archive":
+        candidate_count = configuration.get("candidate_count")
+        if isinstance(candidate_count, int) and not isinstance(candidate_count, bool):
+            amount = f"{candidate_count:,} candidate{'' if candidate_count == 1 else 's'}"
+        else:
+            amount = "Unavailable"
+        return amount, "Candidate count · enumerative without archive (no time budget)"
+
+    time_budget = configuration.get("time_budget_seconds")
+    if isinstance(time_budget, (int, float)) and not isinstance(time_budget, bool):
+        value = Decimal(str(time_budget)).normalize()
+        amount = f"{value:,f} second{'' if value == 1 else 's'}"
+    else:
+        amount = "Unavailable"
+    return amount, "Wall-clock search time"
+
+
 def _metadata_document(
     *, rendered_at_utc: str, feature_labels: str, asset_prefix: str
 ) -> dict[str, object]:
@@ -293,6 +316,7 @@ def _html_document(
     label_name = (
         "Stable feature IDs" if feature_labels == "id" else "Feature expressions"
     )
+    budget_amount, budget_basis = _budget_summary(manifest)
 
     return f"""<!doctype html>
 <html lang="en">
@@ -403,6 +427,8 @@ def _html_document(
         <p class="section-intro">Only configuration preserved in the structured bundle is reported. Unrecorded settings are not reconstructed.</p>
         <table class="facts"><tbody>
           <tr><th>Strategy</th><td>{_escape(manifest["strategy"])}</td></tr>
+          <tr><th>Search budget</th><td>{_escape(budget_amount)}</td></tr>
+          <tr><th>Budget basis</th><td>{_escape(budget_basis)}</td></tr>
           <tr><th>Created</th><td>{_escape(manifest["created_at_utc"])}</td></tr>
           <tr><th>Search-fold objective</th><td>{_escape(metric_label)}</td></tr>
           <tr><th>Feature labels</th><td>{_escape(label_name)} (<code>{_escape(feature_labels)}</code>)</td></tr>
