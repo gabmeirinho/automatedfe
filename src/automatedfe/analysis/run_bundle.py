@@ -1006,16 +1006,6 @@ def load_run_bundle(
     return _load_run_bundle(path, validate_dataset=validate_dataset)
 
 
-def open_run_bundle(
-    path: str | PathLike[str],
-    *,
-    validate_dataset: bool | None = None,
-) -> RunBundle:
-    """Compatibility alias for :func:`load_run_bundle`."""
-
-    return load_run_bundle(path, validate_dataset=validate_dataset)
-
-
 def validate_run_bundle(
     path: str | PathLike[str],
     *,
@@ -1095,7 +1085,6 @@ __all__ = [
     "create_run_bundle",
     "finalize_run_bundle",
     "load_run_bundle",
-    "open_run_bundle",
     "validate_run_bundle",
     "write_run_bundle",
 ]

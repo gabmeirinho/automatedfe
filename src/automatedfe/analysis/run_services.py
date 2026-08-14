@@ -6,7 +6,7 @@ import tempfile
 from os import PathLike
 from pathlib import Path
 
-from ..tracking import PROJECT_STATE_TAG, MlflowRunStore, MlflowStore
+from ..tracking import PROJECT_STATE_TAG, MlflowRunStore
 from .run_report import render_run_report
 
 
@@ -42,7 +42,7 @@ def _resolve_store(
         raise ValueError(
             "tracking_store cannot be combined with tracking_uri or artifact_root"
         )
-    return tracking_store or MlflowStore(
+    return tracking_store or MlflowRunStore(
         tracking_uri,
         artifact_root=artifact_root,
     )

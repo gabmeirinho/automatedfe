@@ -17,12 +17,10 @@ from numbers import Integral, Real
 from os import PathLike
 from pathlib import Path
 from time import monotonic_ns
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from geneticengine.evaluation.budget import TimeBudget
 
-from ..analysis.artifacts import CANDIDATES_COLUMNS
-from ..analysis.run_bundle import RunBundleWriter
 from ..analysis.run_report import render_run_report
 from ..data.transaction_materialization import DEFAULT_MMAP_DIR
 from ..evaluation.final_evaluation import (
@@ -33,13 +31,16 @@ from ..evaluation.final_evaluation import (
 from ..evaluation.fitness import DEFAULT_N_SPLITS, DEFAULT_RANDOM_STATE
 from ..features.feature_materialization import FeatureMaterializer
 from ..features.grammar import expr
-from ..tracking import MlflowRunStore, MlflowStore
+from ..tracking import MlflowRunStore
 from .enumerative_search import build_enumerative_search
 from .gp import build_search_algorithm
 from .lifecycle import SearchLifecycleRecorder
 from .random_search import build_random_search
 from .search import canonical_expression_key
 from .unbound_enumerative_search import build_unbound_enumerative_search
+
+if TYPE_CHECKING:
+    from ..analysis.run_bundle import RunBundleWriter
 
 
 class SearchStrategy(str, Enum):
@@ -61,38 +62,6 @@ _EVALUATED_STRATEGIES = frozenset(
         SearchStrategy.RANDOM,
     }
 )
-
-DIAGNOSTIC_COLUMNS = CANDIDATES_COLUMNS
-
-
-class RunnerDiagnosticsRecorder(SearchLifecycleRecorder):
-    """Deprecated compatibility alias for :class:`SearchLifecycleRecorder`.
-
-    The old runner recorder streamed candidate rows to a CSV; the lifecycle
-    recorder preserves that behavior through ``candidate_csv_path`` and adds
-    the complete candidate, generation, and archive-snapshot evidence.
-    """
-
-    def __init__(self, path: str | PathLike[str], strategy: SearchStrategy) -> None:
-        super().__init__(
-            strategy=(
-                strategy.value
-                if isinstance(strategy, SearchStrategy)
-                else str(strategy)
-            ),
-            candidate_csv_path=path,
-        )
-
-    def finalize(self, archive_expressions: Sequence[expr]) -> Path:
-        """Compatibility finalize: apply membership and rewrite the CSV."""
-
-        self.on_search_completed(
-            canonical_expression_key(expression) for expression in archive_expressions
-        )
-        if self._candidate_csv_path is None:
-            raise ValueError("no candidate CSV path configured")
-        return self._candidate_csv_path
-
 
 @dataclass(frozen=True, slots=True)
 class SearchRunResult:
@@ -126,22 +95,10 @@ class SearchRunResult:
         return self.final_evaluation.metrics
 
     @property
-    def final_result(self) -> FinalEvaluationResult:
-        """Compatibility alias for the held-out evaluation result."""
-
-        return self.final_evaluation
-
-    @property
     def final_evaluation_result(self) -> FinalEvaluationResult:
         """Return the held-out result under its explicit type name."""
 
         return self.final_evaluation
-
-    @property
-    def metrics(self) -> dict[str, float]:
-        """Compatibility alias for :attr:`final_metrics`."""
-
-        return self.final_metrics
 
     @property
     def selected_expressions(self) -> tuple[expr, ...]:
@@ -178,35 +135,10 @@ class SearchRunResult:
         return self.additive_evaluation.metrics
 
     @property
-    def active_set_metrics(self) -> dict[str, float] | None:
-        """Compatibility alias for :attr:`active_set_final_metrics`."""
-
-        return self.active_set_final_metrics
-
-    @property
-    def evaluation_count(self) -> int:
-        """Compatibility alias for the number of search evaluations."""
-
-        return self.evaluated_count
-
-    @property
     def accepted_count(self) -> int:
         """Return generated candidates that were not structural duplicates."""
 
         return self.generated_count - self.duplicate_count
-
-    @property
-    def search_duration(self) -> float:
-        """Compatibility alias for the search duration in seconds."""
-
-        return self.search_duration_seconds
-
-    @property
-    def final_evaluation_duration(self) -> float:
-        """Compatibility alias for the final-evaluation duration."""
-
-        return self.final_evaluation_duration_seconds
-
 
 def _coerce_strategy(strategy: SearchStrategy | str) -> SearchStrategy:
     if isinstance(strategy, SearchStrategy):
@@ -406,20 +338,16 @@ def _build_final_evaluator(
 
 
 def _evaluate_final_archive(
-    evaluator: Any,
+    evaluator: FinalEvaluator,
     expressions: Sequence[expr],
     objectives: tuple[tuple[float, ...], ...] | None,
 ) -> Any:
     """Evaluate the archive once, attaching its search-fold diagnostics."""
 
-    if isinstance(evaluator, FinalEvaluator):
-        return evaluator.evaluate(
-            expressions,
-            search_fold_scores=objectives,
-        )
-    # Keep the runner's small compatibility seam usable by callers and tests
-    # that provide a historical evaluator double without the new keyword.
-    return evaluator.evaluate(expressions)
+    return evaluator.evaluate(
+        expressions,
+        search_fold_scores=objectives,
+    )
 
 
 def _empty_archive_error(
@@ -642,7 +570,11 @@ def _run_feature_search_impl(
     generated_count, evaluated_count, invalid_count, duplicate_count = _search_counts(
         search
     )
-    grammar_exhausted = bool(getattr(search, "grammar_exhausted", False))
+    grammar_exhausted = (
+        search.grammar_exhausted
+        if selected_strategy in _EVALUATED_STRATEGIES
+        else search.exhausted
+    )
 
     if lifecycle is not None:
         lifecycle.on_search_completed(
@@ -711,15 +643,10 @@ def _run_feature_search_impl(
     additive_evaluation_duration_seconds: float | None = None
     if active_mode and active_set_expressions:
         active_started_ns = monotonic_ns()
-        if isinstance(final_evaluator, FinalEvaluator):
-            active_set_final_evaluation = final_evaluator.evaluate(
-                active_set_expressions,
-                include_diagnostics=False,
-            )
-        else:
-            active_set_final_evaluation = final_evaluator.evaluate(
-                active_set_expressions
-            )
+        active_set_final_evaluation = final_evaluator.evaluate(
+            active_set_expressions,
+            include_diagnostics=False,
+        )
         active_set_final_evaluation_duration_seconds = (
             monotonic_ns() - active_started_ns
         ) * 1e-9
@@ -786,7 +713,6 @@ _GENERATION_METRICS = {
     "Evaluated": "evaluated",
     "ArchiveSize": "archive_size",
     "Added": "added",
-    "Removed": "removed",
     "DurationSeconds": "generation_duration_seconds",
     "CumulativeRuntimeSeconds": "cumulative_runtime_seconds",
 }
@@ -962,7 +888,7 @@ def run_feature_search(
         )
     # This health probe deliberately precedes input fingerprinting and all
     # dataset, materializer, and search construction.
-    store = tracking_store or MlflowStore(
+    store = tracking_store or MlflowRunStore(
         tracking_uri,
         artifact_root=artifact_root,
     )
@@ -1003,6 +929,8 @@ def run_feature_search(
 
     with tempfile.TemporaryDirectory(prefix=f"automatedfe-{run_id}-") as temporary:
         try:
+            from ..analysis.run_bundle import RunBundleWriter
+
             writer = RunBundleWriter(
                 Path(temporary) / run_id,
                 run_id=run_id,
@@ -1100,8 +1028,6 @@ def run_feature_search(
 
 
 __all__ = [
-    "DIAGNOSTIC_COLUMNS",
-    "RunnerDiagnosticsRecorder",
     "SearchAnalysisError",
     "SearchLifecycleRecorder",
     "SearchRunResult",

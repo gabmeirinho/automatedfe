@@ -16,12 +16,8 @@ from automatedfe.features.grammar import (
     build_grammar,
     tree_depth,
 )
-from automatedfe.search import (
-    MaterializingArchiveSearch,
-    build_unbound_enumerative_search,
+from automatedfe.search.enumerative_search import (
     build_enumerative_search,
-    build_random_search,
-    canonical_expression_key,
     collect_unique_expressions,
     iter_bounded_expressions,
 )
@@ -29,6 +25,9 @@ from automatedfe.search.archive import (
     SNAPSHOT_MAPPING_REFERENCE,
     load_snapshot,
 )
+from automatedfe.search.random_search import build_random_search
+from automatedfe.search.search import MaterializingArchiveSearch, canonical_expression_key
+from automatedfe.search.unbound_enumerative_search import build_unbound_enumerative_search
 
 LABEL_MAPPING = {
     "status": {"approved": 0, "complete": 1},
@@ -199,7 +198,7 @@ def test_unbound_search_exhausts_the_grammar_stream_before_the_batch_limit(
 
     results = unbound.search()
 
-    assert unbound.grammar_exhausted
+    assert unbound.exhausted
     assert unbound.accepted_count == 2
     assert unbound.generated_count == 2
     assert unbound.duplicate_count == 0
@@ -286,7 +285,6 @@ def test_evaluated_strategy_emits_complete_generation_histories(
             for entry in document["expressions"]
         )
         assert row["Added"] == len(current_keys - previous_keys)
-        assert row["Removed"] == len(previous_keys - current_keys)
         assert row["ArchiveSize"] == len(current_keys)
         previous_keys = current_keys
 

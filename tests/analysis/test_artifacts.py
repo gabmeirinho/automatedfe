@@ -409,7 +409,6 @@ def test_generations_csv_round_trips_with_schema_validation(tmp_path):
             "Evaluated": 47,
             "ArchiveSize": 5,
             "Added": 3,
-            "Removed": 1,
             "DurationSeconds": 1.5,
             "CumulativeRuntimeSeconds": 2.5,
         }

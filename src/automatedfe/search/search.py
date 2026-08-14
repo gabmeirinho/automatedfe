@@ -7,7 +7,6 @@ import logging
 import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from inspect import signature
 from os import PathLike
 from pathlib import Path
 from time import monotonic_ns
@@ -115,9 +114,6 @@ def _build_search_components(
     active_correlation_threshold: float = 0.90,
     promotion_min_gain: float = 0.0,
     promotion_mean_gain: float = 0.0005,
-    promotion_corr_threshold_active: float | None = None,
-    promotion_min_delta_threshold: float | None = None,
-    promotion_min_mean_delta_threshold: float | None = None,
 ) -> _SearchComponents:
     """Build the grammar, evaluator, problem, and archive foundation."""
 
@@ -127,12 +123,6 @@ def _build_search_components(
         raise ValueError("Archive mode requires exactly three folds")
     if use_active_set and score_metric != "brier_improvement":
         raise ValueError("use_active_set requires score_metric='brier_improvement'")
-    if promotion_corr_threshold_active is not None:
-        active_correlation_threshold = promotion_corr_threshold_active
-    if promotion_min_delta_threshold is not None:
-        promotion_min_gain = promotion_min_delta_threshold
-    if promotion_min_mean_delta_threshold is not None:
-        promotion_mean_gain = promotion_min_mean_delta_threshold
     grammar = build_grammar(mapping)
     if max_depth is None:
         max_depth = DEFAULT_MAX_DEPTH
@@ -555,26 +545,13 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
         if generation in self._promotion_boundaries:
             return False
         self._promotion_boundaries.add(generation)
-        promotion_owner = getattr(self, "active_set_manager", None)
-        if promotion_owner is None:
-            # Compatibility for callers that construct the lifecycle with an
-            # older archive object that owns promotion state itself.
-            promotion_owner = self.archive_step
-        maybe_promote = getattr(promotion_owner, "maybe_promote", None)
-        if not callable(maybe_promote):
+        if self.active_set_manager is None:
             return False
-        try:
-            parameters = signature(maybe_promote).parameters
-        except (TypeError, ValueError):
-            parameters = {}
-        if "evaluator" in parameters:
-            changed = maybe_promote(
-                self.problem,
-                generation,
-                evaluator=self.tracker.evaluator,
-            )
-        else:
-            changed = maybe_promote(self.problem, generation)
+        changed = self.active_set_manager.maybe_promote(
+            self.problem,
+            generation,
+            evaluator=self.tracker.evaluator,
+        )
         if changed:
             if hasattr(self.fitness_evaluator, "invalidate_baseline_cache"):
                 self.fitness_evaluator.invalidate_baseline_cache()
@@ -765,9 +742,6 @@ def _build_evaluated_search(
     active_correlation_threshold: float = 0.90,
     promotion_min_gain: float = 0.0,
     promotion_mean_gain: float = 0.0005,
-    promotion_corr_threshold_active: float | None = None,
-    promotion_min_delta_threshold: float | None = None,
-    promotion_min_mean_delta_threshold: float | None = None,
 ) -> MaterializingArchiveSearch:
     """Build a candidate-generating strategy on the shared lifecycle."""
 
@@ -792,9 +766,6 @@ def _build_evaluated_search(
         active_correlation_threshold=active_correlation_threshold,
         promotion_min_gain=promotion_min_gain,
         promotion_mean_gain=promotion_mean_gain,
-        promotion_corr_threshold_active=promotion_corr_threshold_active,
-        promotion_min_delta_threshold=promotion_min_delta_threshold,
-        promotion_min_mean_delta_threshold=promotion_min_mean_delta_threshold,
     )
     candidate_generator = candidate_generator_factory(components)
     recorder = _csv_recorder(csv_path, components.problem)

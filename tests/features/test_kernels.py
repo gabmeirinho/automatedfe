@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from automatedfe.features.feature_spec import (
-    Aggregation,
     RowWindow,
     TimeWindow,
     TotalHistoryWindow,
@@ -177,20 +176,20 @@ def test_aggregate_wrapper_with_feature_spec_types():
         MERCHANT_IDS,
         AMOUNTS,
         CREATED_AT,
-        Aggregation.SUM,
+        "sum",
         RowWindow(2),
     )
     expected = reference(MERCHANT_IDS, AMOUNTS, CREATED_AT, "sum", "rows", 2)
     np.testing.assert_allclose(actual, expected, equal_nan=True)
 
     time_actual = aggregate(
-        MERCHANT_IDS, AMOUNTS, CREATED_AT, Aggregation.MEAN, TimeWindow(1000)
+        MERCHANT_IDS, AMOUNTS, CREATED_AT, "mean", TimeWindow(1000)
     )
     time_expected = reference(MERCHANT_IDS, AMOUNTS, CREATED_AT, "mean", "time", 1000)
     np.testing.assert_allclose(time_actual, time_expected, equal_nan=True)
 
     total_actual = aggregate(
-        MERCHANT_IDS, AMOUNTS, None, Aggregation.MAX, TotalHistoryWindow()
+        MERCHANT_IDS, AMOUNTS, None, "max", TotalHistoryWindow()
     )
     total_expected = reference(MERCHANT_IDS, AMOUNTS, CREATED_AT, "max", "total", 0)
     np.testing.assert_allclose(total_actual, total_expected, equal_nan=True)

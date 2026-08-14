@@ -9,9 +9,9 @@ import pytest
 def mlflow_store(tmp_path):
     """Return an isolated SQLite/artifact-backed tracking repository."""
 
-    from automatedfe.tracking import MlflowStore
+    from automatedfe.tracking import MlflowRunStore
 
-    return MlflowStore(
+    return MlflowRunStore(
         f"sqlite:///{tmp_path / 'mlflow.db'}",
         artifact_root=tmp_path / "artifacts",
     )

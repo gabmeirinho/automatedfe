@@ -9,41 +9,31 @@ import sys
 from types import ModuleType
 
 
-_CHECKS: dict[str, tuple[str, tuple[str, ...], str]] = {
+_CHECKS: dict[str, tuple[str, str]] = {
     "merchants-code-mismatches": (
         "automatedfe.cli.check_merchants_code_mismatches",
-        ("merchant-code-mismatches", "check-merchants-code-mismatches"),
         "Compare transaction merchant category codes with merchants.parquet",
     ),
     "merchants-multiple-codes": (
         "automatedfe.cli.check_merchants_multiple_codes",
-        ("merchant-multiple-codes", "check-merchants-multiple-codes"),
         "Find merchants with more than one merchant category code",
     ),
     "mmap-lengths": (
         "automatedfe.cli.check_mmap_lengths",
-        ("check-mmap-lengths",),
         "Check mmap row counts against transformed transactions",
     ),
     "null-percentages": (
         "automatedfe.cli.check_null_percentages",
-        ("check-null-percentages",),
         "Print null counts and percentages for transformed datasets",
     ),
     "nulls-transactions": (
         "automatedfe.cli.check_nulls_transactions",
-        ("transaction-nulls", "check-nulls-transactions"),
         "Compare null counts for source and transformed transactions",
     ),
     "transactions-sorted": (
         "automatedfe.cli.check_transactions_sorted",
-        ("check-transactions-sorted",),
         "Check transaction ordering",
     ),
-}
-
-_ALIASES = {
-    alias: name for name, (_, aliases, _) in _CHECKS.items() for alias in aliases
 }
 
 
@@ -55,14 +45,13 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run a data validation or diagnostic check.",
     )
     subparsers = parser.add_subparsers(dest="check", required=True, title="checks")
-    for name, (_, aliases, help_text) in _CHECKS.items():
-        subparsers.add_parser(name, aliases=list(aliases), help=help_text)
+    for name, (_, help_text) in _CHECKS.items():
+        subparsers.add_parser(name, help=help_text)
     return parser
 
 
 def _module_for(check: str) -> ModuleType:
-    canonical = _ALIASES.get(check, check)
-    module_name = _CHECKS[canonical][0]
+    module_name = _CHECKS[check][0]
     return import_module(module_name)
 
 
@@ -76,7 +65,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2  # argparse exits for the required subcommand above.
 
     check = arguments[0]
-    if check.startswith("-") or (check not in _CHECKS and check not in _ALIASES):
+    if check.startswith("-") or check not in _CHECKS:
         parser.parse_args(arguments)
         return 2
 

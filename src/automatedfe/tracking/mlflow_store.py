@@ -249,8 +249,6 @@ class MlflowRunStore:
                 raise
         return self.client.get_run(run.info.run_id)
 
-    start_run = create_run
-
     def log_parameters(self, run_id: str, parameters: Mapping[str, object]) -> None:
         """Log configuration parameters without relying on an active run."""
 
@@ -260,8 +258,6 @@ class MlflowRunStore:
         ]
         if values:
             self.client.log_batch(run_id, params=values)
-
-    log_params = log_parameters
 
     def log_fingerprints(self, run_id: str, fingerprints: Mapping[str, object]) -> None:
         """Add content fingerprints as searchable run tags."""
@@ -304,8 +300,6 @@ class MlflowRunStore:
         if values:
             self.client.log_batch(run_id, metrics=values)
 
-    log_metrics = log_generation_metrics
-
     def set_project_state(self, run_id: str, project_state: str) -> None:
         if not isinstance(project_state, str) or not project_state:
             raise ValueError("project_state must be a non-empty string")
@@ -324,8 +318,6 @@ class MlflowRunStore:
         self.client.set_tag(run_id, PROJECT_STATE_TAG, project_state)
         self.client.set_terminated(run_id, status=status)
         return self.client.get_run(run_id)
-
-    finish_run = terminate_run
 
     def get_run(self, run_id: str, *, include_deleted: bool = False) -> Run:
         run = self.client.get_run(run_id)
@@ -401,8 +393,6 @@ class MlflowRunStore:
             validate_run_bundle(downloaded, validate_dataset=False)
         shutil.rmtree(staging)
 
-    store_artifact_bundle = log_artifact_bundle
-
     def download_artifact_bundle(
         self,
         run_id: str,
@@ -427,11 +417,3 @@ class MlflowRunStore:
                 f"Downloaded artifact bundle run ID {bundle.run_id!r} does not match {run_id!r}"
             )
         return bundle
-
-    download_bundle = download_artifact_bundle
-
-
-# Accommodate both conventional spellings without duplicating implementation.
-MLflowRunStore = MlflowRunStore
-MlflowStore = MlflowRunStore
-MLflowStore = MlflowRunStore

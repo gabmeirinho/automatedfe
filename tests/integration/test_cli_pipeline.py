@@ -88,7 +88,7 @@ def test_dispatch_runs_preprocessing_and_tracked_search(
     mapping_path = transformed_dir / "label_mapping.json"
     mmap_dir = transformed_dir / "mmap"
     monkeypatch.setattr(
-        runner_module, "MlflowStore", lambda *_args, **_kwargs: mlflow_store
+        runner_module, "MlflowRunStore", lambda *_args, **_kwargs: mlflow_store
     )
 
     assert dispatch(

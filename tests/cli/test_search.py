@@ -4,7 +4,7 @@ import pytest
 
 import automatedfe.cli.search as search_cli
 from automatedfe.features.grammar import MeanAmount
-from automatedfe.search import SearchAnalysisError, SearchStrategy
+from automatedfe.search.runner import SearchAnalysisError, SearchStrategy
 
 
 def fake_result(strategy=SearchStrategy.ENUMERATIVE_WITHOUT_ARCHIVE):

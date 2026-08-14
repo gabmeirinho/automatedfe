@@ -27,7 +27,6 @@ from .archive import (
     ActiveSetSnapshot,
     ArchiveSnapshot,
     ArchiveStep,
-    GPArchiveStep,
     absolute_pearson_correlation,
     build_snapshot_document,
     correlation_rejection,
@@ -43,10 +42,8 @@ from .archive import (
 )
 from .enumerative_search import (
     BoundedExpressionEnumerator,
-    BoundedGrammarEnumerator,
     EnumerationResult,
     build_enumerative_search,
-    collect_evaluation_free_expressions,
     collect_unique_expressions,
     iter_bounded_expressions,
 )
@@ -73,15 +70,6 @@ from .unbound_enumerative_search import (
     UnboundEnumerativeSearch,
     build_unbound_enumerative_search,
 )
-from .runner import (
-    DIAGNOSTIC_COLUMNS,
-    RunnerDiagnosticsRecorder,
-    SearchAnalysisError,
-    SearchRunResult,
-    SearchStrategy,
-    run_feature_search,
-)
-
 __all__ = [
     "ACTIVE_SET_FORMAT_IDENTIFIER",
     "ACTIVE_SET_FORMAT_VERSION",
@@ -97,7 +85,6 @@ __all__ = [
     "DEFAULT_PROMOTION_MEAN_GAIN",
     "DEFAULT_PROMOTION_MIN_GAIN",
     "DEFAULT_PROMOTION_REFRESH_TOP_N",
-    "DIAGNOSTIC_COLUMNS",
     "DUPLICATE",
     "EVALUATED",
     "FORMAT_IDENTIFIER",
@@ -115,18 +102,12 @@ __all__ = [
     "ActiveSetManager",
     "ActiveSetSnapshot",
     "BoundedExpressionEnumerator",
-    "BoundedGrammarEnumerator",
     "CandidateEvaluator",
     "CandidateGenerator",
     "EnumerationResult",
-    "GPArchiveStep",
     "MaterializingArchiveSearch",
     "MaterializingGeneticProgramming",
-    "RunnerDiagnosticsRecorder",
-    "SearchAnalysisError",
     "SearchLifecycleRecorder",
-    "SearchRunResult",
-    "SearchStrategy",
     "UnboundEnumerativeSearch",
     "absolute_pearson_correlation",
     "build_enumerative_search",
@@ -135,7 +116,6 @@ __all__ = [
     "build_snapshot_document",
     "build_unbound_enumerative_search",
     "canonical_expression_key",
-    "collect_evaluation_free_expressions",
     "collect_unique_expressions",
     "correlation_rejection",
     "decode_expression",
@@ -145,7 +125,6 @@ __all__ = [
     "load_active_set_snapshot",
     "load_archive",
     "load_snapshot",
-    "run_feature_search",
     "validate_archive_quality_threshold",
     "validate_correlation_threshold",
     "write_snapshot",

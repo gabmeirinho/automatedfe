@@ -72,10 +72,8 @@ def test_fitness_uses_ordered_training_rows_and_excludes_test_rows(tmp_path):
         equal_nan=True,
     )
     assert evaluator.labels.tolist() == [0, 1] * 6
-    assert evaluator.fit_indices.tolist() == list(range(9))
-    assert evaluator.validation_indices.tolist() == [9, 10, 11]
     assert evaluator(spec) == 1.0
-    assert isinstance(evaluator.last_model, RandomForestClassifier)
+    assert isinstance(evaluator.last_models[-1], RandomForestClassifier)
     assert all(model.n_estimators == 50 for model in evaluator.last_models)
     assert all(model.n_jobs == -1 for model in evaluator.last_models)
     assert len(evaluator.cv_splits) == 3
@@ -192,8 +190,8 @@ def test_residual_evaluator_scores_brier_improvement_over_each_fold_baseline(tmp
     assert evaluator.score_metric == "brier_improvement"
     assert score > 0.0
     assert len(evaluator.fold_scores) == 3
-    assert isinstance(evaluator.last_model, DecisionTreeRegressor)
-    assert hasattr(evaluator.last_model, "min_samples_leaf")
+    assert isinstance(evaluator.last_models[-1], DecisionTreeRegressor)
+    assert hasattr(evaluator.last_models[-1], "min_samples_leaf")
     assert evaluator.fold_scores == pytest.approx(
         [
             1.0 - corrected / baseline
@@ -203,7 +201,6 @@ def test_residual_evaluator_scores_brier_improvement_over_each_fold_baseline(tmp
             )
         ]
     )
-    assert evaluator.last_model is evaluator.last_models[-1]
     values = evaluator._values_for(feature).reshape(-1, 1)
     for fold, (fit_indices, validation_indices) in enumerate(evaluator.cv_splits):
         assert evaluator.event_timestamps[fit_indices[-1]] < evaluator.event_timestamps[
@@ -256,6 +253,11 @@ def test_residual_evaluator_gives_a_constant_signal_zero_improvement(tmp_path):
     class ConstantMaterializer:
         def materialize_for_events(self, _individual, merchants, _timestamps):
             return np.ones(len(merchants), dtype=np.float64)
+
+        def materialize_for_events_with_duration(
+            self, individual, merchants, timestamps
+        ):
+            return self.materialize_for_events(individual, merchants, timestamps), 0.0
 
     evaluator = ResidualEvaluator(ConstantMaterializer(), dataset_path)
 
@@ -395,7 +397,7 @@ def test_residual_objective_vector_returns_fold_scores_and_materialization_time(
     assert len(vector) == 4
     assert vector[:3] == pytest.approx(evaluator.fold_scores)
     assert vector[3] >= 0.0
-    assert isinstance(evaluator.last_model, DecisionTreeRegressor)
+    assert isinstance(evaluator.last_models[-1], DecisionTreeRegressor)
     assert evaluator.objective_vector(feature)[3] == vector[3]
     assert evaluator(feature) == pytest.approx(float(np.mean(vector[:3])))
 

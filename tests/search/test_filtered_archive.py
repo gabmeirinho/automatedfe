@@ -87,12 +87,12 @@ def test_active_set_manager_applies_quality_history_and_peer_filters_in_order():
     )
     assert any(
         item["outcome"] == "rejected" and item["reason"] == "same_generation_peer_cluster"
-        for item in step.filter_diagnostics
+        for item in step.admission_diagnostics
     )
 
     run(step, problem, [Expression("low")], generation=1)
     assert [item.get_phenotype().name for item in step.history] == ["a", "c"]
-    assert any(item["reason"] == "quality_threshold" for item in step.filter_diagnostics)
+    assert any(item["reason"] == "quality_threshold" for item in step.admission_diagnostics)
 
 
 def test_active_set_manager_rejects_invalid_signals_and_preserves_admission_objectives():
@@ -128,7 +128,7 @@ def test_active_set_manager_rejects_invalid_signals_and_preserves_admission_obje
     )
     assert [item.get_phenotype().name for item in step.history] == ["a"]
     assert step.history_objectives == original
-    reasons = {item["reason"] for item in step.filter_diagnostics}
+    reasons = {item["reason"] for item in step.admission_diagnostics}
     assert "duplicate_history_expression" in reasons
     assert "signal_constant" in reasons
     assert "signal_nonfinite" in reasons

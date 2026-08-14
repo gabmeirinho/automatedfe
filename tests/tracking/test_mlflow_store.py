@@ -6,12 +6,12 @@ from pathlib import Path
 import pytest
 
 import automatedfe.analysis.run_services as service_module
-from automatedfe.analysis import (
+from automatedfe.analysis.run_services import (
     RunAnalysisError,
     RunReportError,
     RunStateError,
     analyze_run,
-    rerender_tracked_run_report,
+    rerender_run_report,
 )
 from automatedfe.analysis.artifacts import (
     fingerprint_mapping,
@@ -23,7 +23,7 @@ from automatedfe.tracking import (
     DEFAULT_DATABASE_PATH,
     DEFAULT_TRACKING_URI,
     EXPERIMENT_NAME,
-    MlflowStore,
+    MlflowRunStore,
     TrackingStoreError,
     build_run_name,
     resolve_tracking_uri,
@@ -189,7 +189,7 @@ def test_unavailable_artifact_store_fails_during_construction(tmp_path):
     artifact_file.write_text("occupied", encoding="utf-8")
 
     with pytest.raises(TrackingStoreError, match="artifact|directory"):
-        MlflowStore(f"sqlite:///{tmp_path / 'mlflow.db'}", artifact_root=artifact_file)
+        MlflowRunStore(f"sqlite:///{tmp_path / 'mlflow.db'}", artifact_root=artifact_file)
 
 
 def test_analysis_retry_updates_original_run_only_after_upload(
@@ -256,7 +256,7 @@ def test_report_rerender_updates_same_run_and_preserves_old_version(
 
     monkeypatch.setattr(service_module, "render_run_report", fake_render)
 
-    assert rerender_tracked_run_report(
+    assert rerender_run_report(
         run_id, feature_labels="id", tracking_store=mlflow_store
     ) == run_id
     assert len(mlflow_store.search_runs()) == 1
@@ -282,7 +282,7 @@ def test_failed_rerender_preserves_previous_remote_report(
     monkeypatch.setattr(service_module, "render_run_report", fail_after_local_change)
 
     with pytest.raises(RunReportError, match=f"{run_id}.*validation failed"):
-        rerender_tracked_run_report(run_id, tracking_store=mlflow_store)
+        rerender_run_report(run_id, tracking_store=mlflow_store)
     bundle = mlflow_store.download_artifact_bundle(
         run_id, tmp_path / "preserved"
     )
@@ -301,7 +301,7 @@ def test_recovery_commands_reject_wrong_states(mlflow_store, tmp_path):
         mlflow_store, other_root, state="analysis_failed"
     )
     with pytest.raises(RunStateError, match=f"{failed}.*FINISHED"):
-        rerender_tracked_run_report(failed, tracking_store=mlflow_store)
+        rerender_run_report(failed, tracking_store=mlflow_store)
 
 
 def test_missing_run_artifacts_name_run_and_do_not_promote(mlflow_store, tmp_path):
@@ -325,4 +325,4 @@ def test_corrupt_artifacts_are_rejected_with_run_id(
     mlflow_store.client.log_text(run_id, "not json", "manifest.json")
 
     with pytest.raises(RunReportError, match=run_id):
-        rerender_tracked_run_report(run_id, tracking_store=mlflow_store)
+        rerender_run_report(run_id, tracking_store=mlflow_store)

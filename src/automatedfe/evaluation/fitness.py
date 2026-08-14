@@ -209,12 +209,8 @@ class ChronologicalFoldEvaluator:
                 ) from error
             raise
 
-        # Keep the historical single-fold attributes pointing at the final,
-        # latest fold.  ``cv_splits`` contains all folds used for scoring.
-        self.fit_indices, self.validation_indices = self.cv_splits[-1]
         self.fold_scores: list[float] = []
         self.last_models: list[Any] = []
-        self.last_model: Any = None
         # The materialization duration of the most recent objective_vector
         # call.  It stays finite for candidates that were materialized, even
         # when their fold scoring later fails, so invalid-after-materialization
@@ -290,8 +286,6 @@ class ChronologicalFoldEvaluator:
     def _score_folds(self, values: np.ndarray, individual: Any) -> list[float]:
         raise NotImplementedError
 
-    evaluate = __call__
-
 
 class RandomForestFitness(ChronologicalFoldEvaluator):
     """Materialize one feature and score it with chronological cross-validation."""
@@ -363,7 +357,6 @@ class RandomForestFitness(ChronologicalFoldEvaluator):
                 score,
             )
 
-        self.last_model = self.last_models[-1]
         return self.fold_scores
 
 
@@ -498,7 +491,6 @@ class ResidualEvaluator(ChronologicalFoldEvaluator):
                 improvement,
             )
 
-        self.last_model = self.last_models[-1]
         return self.fold_scores
 
 
@@ -677,13 +669,8 @@ class ActiveResidualEvaluator(ResidualEvaluator):
                 improvement,
             )
 
-        self.last_model = self.last_models[-1]
         return self.fold_scores
 
-
-ResidualFitness = ResidualEvaluator
-ActiveResidualFitness = ActiveResidualEvaluator
-FitnessEvaluator = RandomForestFitness
 
 __all__ = [
     "DATASET_MERCHANT_COLUMN",
@@ -693,10 +680,8 @@ __all__ = [
     "DEFAULT_N_ESTIMATORS",
     "DEFAULT_N_SPLITS",
     "DEFAULT_RANDOM_STATE",
-    "FitnessEvaluator",
     "RandomForestFitness",
     "ActiveResidualEvaluator",
-    "ActiveResidualFitness",
     "MaterializationError",
     "MIN_LOGIT_WEIGHT",
     "NumericalFitnessError",
@@ -704,7 +689,6 @@ __all__ = [
     "RESIDUAL_SHRINKAGE",
     "RESIDUAL_TREE_PARAMS",
     "ResidualEvaluator",
-    "ResidualFitness",
     "logit",
     "logit_working_response",
     "sigmoid",

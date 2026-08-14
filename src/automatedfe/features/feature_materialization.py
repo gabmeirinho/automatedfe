@@ -38,8 +38,8 @@ def _primitive_feature(individual: TxFeature | Any) -> TxFeature:
     if isinstance(individual, TxFeature):
         return individual
 
-    # CategoryRate is an expression despite exposing to_feature_spec() for
-    # compatibility: its value depends on both numerator and denominator.
+    # CategoryRate is an expression despite exposing a primitive descriptor:
+    # its value depends on both numerator and denominator.
     from .grammar import CategoryRate, NON_TERMINALS
 
     if isinstance(individual, CategoryRate) or isinstance(individual, NON_TERMINALS):
@@ -248,8 +248,6 @@ class FeatureMaterializer:
         self._cache[name] = (result, duration)
         return self._cache[name]
 
-    __call__ = materialize
-
     def materialize_population(self, individuals: list[TxFeature | Any]) -> None:
         """Materialize an already-generated population in its given order."""
 
@@ -274,8 +272,7 @@ class FeatureMaterializer:
     ) -> tuple[np.ndarray, float] | None:
         """Load a cached feature, returning ``(values, duration)`` or ``None``.
 
-        Metadata written before durations were recorded is treated as a cache
-        miss so that the feature is recomputed once and its metadata repaired.
+        Cache metadata must match the current event-feature schema exactly.
         """
 
         if self.features_dir is None:
@@ -291,17 +288,14 @@ class FeatureMaterializer:
             return None
         if not isinstance(metadata, dict):
             return None
-        duration = metadata.get("duration")
         if (
-            metadata.get("checksum") != checksum
-            or metadata.get("rows") != len(event_timestamps)
-            or (
-                metadata.get("name") is not None
-                and metadata.get("name") != name
-            )
-            or not isinstance(duration, (int, float))
-            or not np.isfinite(duration)
-            or duration < 0
+            set(metadata) != {"name", "rows", "checksum", "duration"}
+            or metadata["name"] != name
+            or metadata["checksum"] != checksum
+            or metadata["rows"] != len(event_timestamps)
+            or not isinstance(metadata["duration"], (int, float))
+            or not np.isfinite(metadata["duration"])
+            or metadata["duration"] < 0
         ):
             return None
         try:
@@ -311,7 +305,7 @@ class FeatureMaterializer:
         if cached.size != len(event_timestamps):
             return None
         logger.info("Reusing cached event feature from disk: %s", name)
-        return cached, float(duration)
+        return cached, float(metadata["duration"])
 
     def _store_event_feature(
         self,
@@ -423,9 +417,7 @@ class FeatureMaterializer:
         values, duration = self.materialize_for_events_with_duration(
             individual, event_merchants, event_timestamps
         )
-        # Keep the duration available even for compatible subclasses or test
-        # doubles that override the duration-returning method without using
-        # the internal event cache.
+        # Retain the duration for the event-materialization timing report.
         cache_key = (_individual_name(individual), id(event_merchants), id(event_timestamps))
         self._event_cache[cache_key] = (
             event_merchants,
@@ -489,20 +481,6 @@ class FeatureMaterializer:
         return float(cached[3])
 
 
-def materialize_individual(
-    individual: TxFeature | Any,
-    columns: Mapping[str, np.ndarray] | str | PathLike[str],
-    *,
-    output_path: str | PathLike[str] | None = None,
-) -> np.ndarray:
-    """Compatibility alias for :func:`materialize_feature`."""
-
-    return materialize_feature(individual, columns, output_path=output_path)
-
-
-materialize_aggregation = materialize_feature
-
-
 __all__ = [
     "CREATED_AT_COLUMN",
     "EVENT_FEATURE_METADATA_SUFFIX",
@@ -510,7 +488,5 @@ __all__ = [
     "FEATURE_MMAP_SUFFIX",
     "MERCHANT_ID_COLUMN",
     "FeatureMaterializer",
-    "materialize_aggregation",
     "materialize_feature",
-    "materialize_individual",
 ]

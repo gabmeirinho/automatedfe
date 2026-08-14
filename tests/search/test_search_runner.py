@@ -21,7 +21,6 @@ from automatedfe.search.archive import (
 )
 from automatedfe.search.lifecycle import SearchLifecycleRecorder
 from automatedfe.search.runner import (
-    DIAGNOSTIC_COLUMNS,
     SearchAnalysisError,
     SearchRunResult,
     SearchStrategy,
@@ -47,7 +46,14 @@ class _FinalEvaluator:
     def __init__(self, received):
         self.received = received
 
-    def evaluate(self, expressions):
+    def evaluate(
+        self,
+        expressions,
+        *,
+        search_fold_scores=None,
+        include_diagnostics=True,
+    ):
+        del search_fold_scores, include_diagnostics
         self.received.extend(expressions)
         return SimpleNamespace(metrics={"roc_auc": 0.75})
 
@@ -60,10 +66,6 @@ class _FinalEvaluator:
             models=(),
             expressions=tuple(expressions),
         )
-
-
-def test_diagnostics_columns_follow_the_analysis_candidates_schema():
-    assert DIAGNOSTIC_COLUMNS == CANDIDATES_COLUMNS
 
 
 def test_evaluation_free_runner_writes_common_generated_rows(tmp_path, monkeypatch):
@@ -91,7 +93,7 @@ def test_evaluation_free_runner_writes_common_generated_rows(tmp_path, monkeypat
     )
 
     rows = list(csv.DictReader(csv_path.open(newline="")))
-    assert tuple(rows[0]) == DIAGNOSTIC_COLUMNS
+    assert tuple(rows[0]) == CANDIDATES_COLUMNS
     assert [row["CandidateIndex"] for row in rows] == ["0", "1", "2"]
     assert {row["Strategy"] for row in rows} == {
         "enumerative_without_archive"
@@ -283,8 +285,8 @@ def test_active_runner_evaluates_archive_and_active_set_separately(
     tmp_path,
     monkeypatch,
 ):
-    archive_expression = "archive-expression"
-    active_expression = "active-expression"
+    archive_expression = MeanAmount(0)
+    active_expression = TotalAmount(0)
     received = []
     builder_arguments = {}
 
@@ -415,8 +417,8 @@ def test_active_runner_persists_history_and_active_snapshot(tmp_path, monkeypatc
 
     class StubArchive:
         use_active_set = True
-        archive = ["archive-expression"]
-        active_individuals = ["active-expression"]
+        archive = [MeanAmount(0)]
+        active_individuals = [TotalAmount(0)]
 
         def save(self, path, *, mapping=None):
             Path(path).write_text(json.dumps({"format": "archive"}))
@@ -594,7 +596,6 @@ def test_runner_records_duplicates_without_evaluating_twice(tmp_path, monkeypatc
     assert generation["Evaluated"] == 2
     assert generation["ArchiveSize"] == 2
     assert generation["Added"] == 2
-    assert generation["Removed"] == 0
     assert generation["DurationSeconds"] >= 0
     assert generation["CumulativeRuntimeSeconds"] >= 0
 
@@ -800,7 +801,6 @@ def _tracked_result(writer, *, generation=True):
                 "Evaluated": 0,
                 "ArchiveSize": 0,
                 "Added": 0,
-                "Removed": 0,
                 "DurationSeconds": 0.1,
                 "CumulativeRuntimeSeconds": 0.1,
             }
@@ -956,8 +956,7 @@ def test_tracking_preflight_happens_before_input_or_search_construction(
         nonlocal built
         built = True
 
-    monkeypatch.setattr(runner_module, "MlflowStore", unavailable)
-    monkeypatch.setattr(runner_module, "RunBundleWriter", writer_must_not_run)
+    monkeypatch.setattr(runner_module, "MlflowRunStore", unavailable)
 
     with pytest.raises(RuntimeError, match="tracking unavailable"):
         run_tracked_feature_search(

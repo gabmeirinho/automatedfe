@@ -11,16 +11,14 @@ from automatedfe.data.encoding import DEFAULT_MAPPING_OUTPUT
 from automatedfe.data.sorting import DEFAULT_DATASET_OUTPUT
 from automatedfe.data.transaction_materialization import DEFAULT_MMAP_DIR
 from automatedfe.evaluation.fitness import DEFAULT_RANDOM_STATE
-from automatedfe.search import (
-    DEFAULT_MAX_DEPTH,
+from automatedfe.search import DEFAULT_MAX_DEPTH
+from automatedfe.search.runner import (
     SearchAnalysisError,
     SearchRunResult,
     SearchStrategy,
     run_feature_search,
 )
 
-DEFAULT_DATASET = DEFAULT_DATASET_OUTPUT
-DEFAULT_MAPPING = DEFAULT_MAPPING_OUTPUT
 DEFAULT_SEED = 42
 DEFAULT_POPULATION_SIZE = 50
 
@@ -92,7 +90,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--time-budget",
-        "--time-budget-seconds",
         type=_positive_int,
         help="Positive integer search time budget in seconds (evaluated strategies only)",
     )
@@ -106,19 +103,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--dataset",
-        "--dataset-path",
         dest="dataset",
         type=Path,
-        default=DEFAULT_DATASET,
-        help=f"Sorted event dataset parquet file (default: {DEFAULT_DATASET})",
+        default=DEFAULT_DATASET_OUTPUT,
+        help=f"Sorted event dataset parquet file (default: {DEFAULT_DATASET_OUTPUT})",
     )
     parser.add_argument(
         "--mapping",
-        "--mapping-path",
         dest="mapping",
         type=Path,
-        default=DEFAULT_MAPPING,
-        help=f"Label-mapping JSON file (default: {DEFAULT_MAPPING})",
+        default=DEFAULT_MAPPING_OUTPUT,
+        help=f"Label-mapping JSON file (default: {DEFAULT_MAPPING_OUTPUT})",
     )
     parser.add_argument(
         "--mmap-dir",
@@ -128,7 +123,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--feature-cache-dir",
-        "--feature-cache",
         type=Path,
         default=None,
         help="Persistent primitive/event feature cache directory (default: disabled)",
@@ -203,7 +197,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--archive-quality-threshold",
-        "--min-proxy-improvement",
         dest="archive_quality_threshold",
         type=_nonnegative_float,
         default=0.001,
@@ -213,7 +206,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--archive-correlation-threshold",
-        "--archive-correlation",
         dest="archive_correlation_threshold",
         type=_unit_interval_float,
         default=0.85,
@@ -221,7 +213,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--active-correlation-threshold",
-        "--promotion-corr-threshold-active",
         dest="active_correlation_threshold",
         type=_unit_interval_float,
         default=0.90,
@@ -229,7 +220,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--promotion-min-gain",
-        "--promotion-min-delta-threshold",
         dest="promotion_min_gain",
         type=_finite_float,
         default=0.0,
@@ -237,7 +227,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--promotion-mean-gain",
-        "--promotion-min-mean-delta-threshold",
         dest="promotion_mean_gain",
         type=_finite_float,
         default=0.0005,
@@ -412,8 +401,6 @@ if __name__ == "__main__":
 
 
 __all__ = [
-    "DEFAULT_DATASET",
-    "DEFAULT_MAPPING",
     "DEFAULT_MMAP_DIR",
     "build_parser",
     "main",

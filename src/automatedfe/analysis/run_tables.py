@@ -25,14 +25,6 @@ IMPORTANCES_FILENAME: Final[str] = "evaluation/importances.csv"
 CORRELATIONS_FILENAME: Final[str] = "evaluation/correlations.csv"
 TIMINGS_FILENAME: Final[str] = "evaluation/timings.csv"
 
-# Descriptive aliases used by callers that distinguish these from search
-# lifecycle tables.
-FINAL_FEATURES_FILENAME: Final[str] = FEATURES_FILENAME
-FINAL_METRICS_FILENAME: Final[str] = METRICS_FILENAME
-FINAL_IMPORTANCES_FILENAME: Final[str] = IMPORTANCES_FILENAME
-FINAL_CORRELATIONS_FILENAME: Final[str] = CORRELATIONS_FILENAME
-FINAL_TIMINGS_FILENAME: Final[str] = TIMINGS_FILENAME
-
 FEATURE_COLUMNS: Final[tuple[str, ...]] = (
     "feature_id",
     "feature_label",
@@ -59,11 +51,6 @@ TIMING_COLUMNS: Final[tuple[str, ...]] = (
     "feature_label",
     "materialization_seconds",
 )
-
-FINAL_FEATURE_COLUMNS: Final[tuple[str, ...]] = FEATURE_COLUMNS
-FINAL_IMPORTANCE_COLUMNS: Final[tuple[str, ...]] = IMPORTANCE_COLUMNS
-FINAL_CORRELATION_COLUMNS: Final[tuple[str, ...]] = CORRELATION_COLUMNS
-FINAL_TIMING_COLUMNS: Final[tuple[str, ...]] = TIMING_COLUMNS
 
 EVALUATION_FORMAT: Final[str] = "automatedfe-final-evaluation"
 EVALUATION_SCHEMA_VERSION: Final[int] = 1
@@ -363,28 +350,12 @@ def build_final_evaluation_tables(
     )
 
 
-# Short names keep the table API discoverable alongside the existing
-# ``write_candidates_csv``/``read_candidates_csv`` helpers.
-build_evaluation_tables = build_final_evaluation_tables
-read_evaluation_tables = read_final_evaluation_tables
-write_evaluation_tables = write_final_evaluation_tables
-
-
 __all__ = [
     "CORRELATION_COLUMNS",
     "CORRELATIONS_FILENAME",
     "EVALUATION_DIRECTORY",
     "EVALUATION_FORMAT",
     "EVALUATION_SCHEMA_VERSION",
-    "FINAL_CORRELATION_COLUMNS",
-    "FINAL_CORRELATIONS_FILENAME",
-    "FINAL_FEATURE_COLUMNS",
-    "FINAL_FEATURES_FILENAME",
-    "FINAL_IMPORTANCE_COLUMNS",
-    "FINAL_IMPORTANCES_FILENAME",
-    "FINAL_METRICS_FILENAME",
-    "FINAL_TIMING_COLUMNS",
-    "FINAL_TIMINGS_FILENAME",
     "FEATURE_COLUMNS",
     "FEATURES_FILENAME",
     "FinalEvaluationTables",
@@ -395,9 +366,6 @@ __all__ = [
     "TIMING_COLUMNS",
     "TIMINGS_FILENAME",
     "build_final_evaluation_tables",
-    "build_evaluation_tables",
-    "read_evaluation_tables",
     "read_final_evaluation_tables",
-    "write_evaluation_tables",
     "write_final_evaluation_tables",
 ]

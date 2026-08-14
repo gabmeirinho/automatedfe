@@ -336,7 +336,7 @@ def _resolve_mapping(
     return mapping
 
 
-def _validate_mapping_compatible(
+def _validate_mapping_matches(
     stored_mapping: Mapping[str, Mapping[str, int]],
     provided_mapping: Mapping[str, Mapping[str, int]],
 ) -> None:
@@ -347,7 +347,7 @@ def _validate_mapping_compatible(
         raise ValueError(f"Cannot compare label mappings: {error}") from error
     if stored != provided:
         raise ValueError(
-            "Archive label mapping is incompatible with the provided mapping"
+            "Archive label mapping does not match the provided mapping"
         )
 
 
@@ -474,7 +474,7 @@ def load_archive(
 
     The label mapping embedded in the archive is validated against *mapping*
     when one is provided, so categorical expressions are only reconstructed
-    when their code lists are compatible. Loading never merges or resumes a
+    when their code lists match. Loading never merges or resumes a
     search.
     """
 
@@ -489,7 +489,7 @@ def load_archive(
 
     version, problem, mapping_data, entries = _validate_document(data, archive_path)
     if mapping is not None:
-        _validate_mapping_compatible(mapping_data, _resolve_mapping(mapping))
+        _validate_mapping_matches(mapping_data, _resolve_mapping(mapping))
 
     expressions = tuple(decode_expression(entry["expression"]) for entry in entries)
     objectives = tuple(tuple(entry["objectives"]) for entry in entries)
@@ -613,7 +613,7 @@ def load_active_set_snapshot(
     except ValueError as error:
         raise ValueError(f"Active-set label mapping is invalid: {error}") from error
     if mapping is not None:
-        _validate_mapping_compatible(mapping_data, _resolve_mapping(mapping))
+        _validate_mapping_matches(mapping_data, _resolve_mapping(mapping))
 
     entries = _validate_active_set_entries(data.get("expressions"))
     events = data.get("promotion_events")
@@ -1019,9 +1019,6 @@ class ArchiveStep(GeneticStep):
 
     @staticmethod
     def _expression_key(individual: PhenotypicIndividual) -> str:
-        # Keep archive identity structural for grammar expressions.  The
-        # helper's compatibility fallback preserves support for the small
-        # non-grammar expression objects accepted by the historical API.
         from .search import canonical_expression_key
 
         return canonical_expression_key(individual.get_phenotype())
@@ -1055,8 +1052,7 @@ class _ActiveSetManagerBase(ArchiveStep):
     justified history admission.
 
     ``signal_provider`` receives a candidate phenotype and must return its
-    full training-row signal.  For small hermetic tests, a provider accepting
-    the individual itself is also supported as a compatibility fallback.
+    full training-row signal.
     """
 
     def __init__(
@@ -1075,24 +1071,8 @@ class _ActiveSetManagerBase(ArchiveStep):
         active_correlation_threshold: float = DEFAULT_ACTIVE_CORRELATION_THRESHOLD,
         promotion_min_gain: float = DEFAULT_PROMOTION_MIN_GAIN,
         promotion_mean_gain: float = DEFAULT_PROMOTION_MEAN_GAIN,
-        # Reference-compatible spellings.
-        promotion_corr_threshold_active: float | None = None,
-        promotion_min_delta_threshold: float | None = None,
-        promotion_min_mean_delta_threshold: float | None = None,
-        # These aliases keep the component convenient to use from focused
-        # tests and make the terminology match both the plan and the reference.
-        min_proxy_improvement: float | None = None,
-        correlation_threshold: float | None = None,
-        signal_function: Callable[[object], object] | None = None,
     ) -> None:
         super().__init__(archive_path=archive_path, mapping=mapping)
-        if min_proxy_improvement is not None:
-            archive_quality_threshold = min_proxy_improvement
-        if correlation_threshold is not None:
-            archive_correlation_threshold = correlation_threshold
-        if signal_provider is not None and signal_function is not None:
-            raise ValueError("pass only one of signal_provider or signal_function")
-
         self.archive_quality_threshold = validate_archive_quality_threshold(
             archive_quality_threshold
         )
@@ -1101,12 +1081,6 @@ class _ActiveSetManagerBase(ArchiveStep):
         )
         if not isinstance(use_active_set, bool):
             raise ValueError("use_active_set must be a boolean")
-        if promotion_corr_threshold_active is not None:
-            active_correlation_threshold = promotion_corr_threshold_active
-        if promotion_min_delta_threshold is not None:
-            promotion_min_gain = promotion_min_delta_threshold
-        if promotion_min_mean_delta_threshold is not None:
-            promotion_mean_gain = promotion_min_mean_delta_threshold
         for name, value in (
             ("promotion_interval", promotion_interval),
             ("first_promotion_top_k", first_promotion_top_k),
@@ -1124,9 +1098,7 @@ class _ActiveSetManagerBase(ArchiveStep):
             raise ValueError("promotion gain thresholds must be finite numbers") from error
         if not math.isfinite(promotion_min_gain) or not math.isfinite(promotion_mean_gain):
             raise ValueError("promotion gain thresholds must be finite numbers")
-        self.signal_provider = (
-            signal_provider if signal_provider is not None else signal_function
-        )
+        self.signal_provider = signal_provider
         self.use_active_set = use_active_set
         self.promotion_interval = promotion_interval
         self.first_promotion_top_k = first_promotion_top_k
@@ -1135,27 +1107,18 @@ class _ActiveSetManagerBase(ArchiveStep):
         self.active_correlation_threshold = validate_correlation_threshold(
             active_correlation_threshold
         )
-        self.promotion_corr_threshold_active = self.active_correlation_threshold
         self.promotion_min_gain = promotion_min_gain
         self.promotion_mean_gain = promotion_mean_gain
-        self.promotion_min_delta_threshold = promotion_min_gain
-        self.promotion_min_mean_delta_threshold = promotion_mean_gain
         self.history: list[PhenotypicIndividual] = []
         self.admission_objectives: dict[str, tuple[float, ...]] = {}
         self._history_signals: list[np.ndarray] = []
         self._history_keys: set[str] = set()
         self.admission_diagnostics: list[dict[str, object]] = []
-        # ``filter_diagnostics`` is the name used by the reference workflow;
-        # keep it as the public spelling while retaining the more explicit
-        # ``admission_diagnostics`` alias.
-        self.filter_diagnostics = self.admission_diagnostics
         self.generation_diagnostics: list[dict[str, object]] = []
         self.active_individuals: list[PhenotypicIndividual] = []
         self.baseline_version = 0
         self.promotion_events: list[dict[str, object]] = []
         self.promotion_checks: list[dict[str, object]] = []
-        self.exact_check_history = self.promotion_checks
-        self.promotion_diagnostics = self.promotion_checks
 
     @property
     def history_individuals(self) -> tuple[PhenotypicIndividual, ...]:
@@ -1556,16 +1519,13 @@ class _ActiveSetManagerBase(ArchiveStep):
         problem: Problem,
         population_list: Sequence[PhenotypicIndividual],
         generation: int,
-        evaluator: Evaluator | None = None,
     ) -> list[PhenotypicIndividual]:
         """Process an already evaluated generation and return its front.
 
-        The explicit method mirrors the reference archive API and is useful
-        for deterministic unit tests.  ``evaluator`` is accepted for API
-        compatibility; the population is already evaluated by definition.
+        The explicit method is useful for deterministic active-set tests. The
+        population is already evaluated by definition.
         """
 
-        del evaluator
         self._validate_problem(problem)
         self._problem = problem
         evaluated = list(population_list)
@@ -1802,11 +1762,7 @@ class _ActiveSetManagerBase(ArchiveStep):
     ) -> tuple[np.ndarray | None, str | None]:
         try:
             if self.signal_provider is not None:
-                phenotype = individual.get_phenotype()
-                try:
-                    raw_signal = self.signal_provider(phenotype)
-                except (AttributeError, KeyError, TypeError):
-                    raw_signal = self.signal_provider(individual)
+                raw_signal = self.signal_provider(individual.get_phenotype())
             else:
                 metadata = getattr(individual, "metadata", {})
                 raw_signal = next(
@@ -1888,11 +1844,9 @@ class ActiveSetManager(_ActiveSetManagerBase):
         problem: Problem,
         population_list: Sequence[PhenotypicIndividual],
         generation: int,
-        evaluator: Evaluator | None = None,
     ) -> list[PhenotypicIndividual]:
         """Record active-set history from an already evaluated population."""
 
-        del evaluator
         self._validate_problem(problem)
         self._problem = problem
         evaluated = list(population_list)
@@ -1924,10 +1878,6 @@ class ActiveSetManager(_ActiveSetManagerBase):
         return generation_front
 
 
-# Keep the GP archive alias pointed at the canonical archive.
-GPArchiveStep = ArchiveStep
-
-
 __all__ = [
     "ACTIVE_SET_FORMAT_IDENTIFIER",
     "ACTIVE_SET_FORMAT_VERSION",
@@ -1951,7 +1901,6 @@ __all__ = [
     "ArchiveSnapshot",
     "ArchiveStep",
     "ActiveSetManager",
-    "GPArchiveStep",
     "absolute_pearson_correlation",
     "build_snapshot_document",
     "correlation_rejection",

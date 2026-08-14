@@ -431,67 +431,6 @@ def test_event_feature_duration_persisted_and_reused_from_disk(tmp_path):
     assert again_duration == cached_duration
 
 
-def test_event_feature_legacy_metadata_without_duration_is_recomputed_once(
-    tmp_path, monkeypatch
-):
-    columns = {
-        "merchant_id": np.array([1, 1, 1, 2, 2], dtype=np.int64),
-        "created_at": np.array([1, 2, 3, 1, 5], dtype=np.int64),
-        "amount": np.array([10.0, 20.0, 30.0, 40.0, 50.0]),
-    }
-    events_merchants = np.array([1, 2], dtype=np.int64)
-    events_timestamps = np.array([4, 6], dtype=np.int64)
-    spec = TxFeature("sum", "amount", RowWindow(2).rows, "row")
-    features_dir = tmp_path / "features"
-    features_dir.mkdir()
-
-    checksum = FeatureMaterializer._event_set_checksum(
-        events_merchants, events_timestamps
-    )
-    legacy_values = np.array([50.0, 90.0])
-    mapped = np.memmap(
-        features_dir / f"{spec.name}.events.mmap",
-        dtype=np.float64,
-        mode="w+",
-        shape=legacy_values.shape,
-    )
-    mapped[:] = legacy_values
-    mapped.flush()
-    (features_dir / f"{spec.name}.events.json").write_text(
-        json.dumps({"name": spec.name, "rows": 2, "checksum": checksum})
-    )
-
-    calls = 0
-    original = feature_materialization._compute_primitive
-
-    def counted_materialize(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(feature_materialization, "_compute_primitive", counted_materialize)
-    materializer = FeatureMaterializer(columns, features_dir=features_dir)
-
-    values, duration = materializer.materialize_for_events_with_duration(
-        spec, events_merchants, events_timestamps
-    )
-    np.testing.assert_allclose(values, [50.0, 90.0])
-    assert calls == 1
-    assert duration >= 0.0
-
-    repaired = json.loads((features_dir / f"{spec.name}.events.json").read_text())
-    assert repaired["duration"] == duration
-
-    calls = 0
-    second = FeatureMaterializer(columns, features_dir=features_dir)
-    cached_values, cached_duration = second.materialize_for_events_with_duration(
-        spec, events_merchants, events_timestamps
-    )
-    assert calls == 0
-    assert cached_duration == duration
-    np.testing.assert_allclose(cached_values, [50.0, 90.0])
-
-
 def test_failed_materialization_does_not_record_timing(tmp_path):
     columns = {
         "merchant_id": np.array([1, 1], dtype=np.int64),

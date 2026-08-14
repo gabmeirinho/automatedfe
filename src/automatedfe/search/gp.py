@@ -72,9 +72,6 @@ def build_search_algorithm(
     active_correlation_threshold: float = 0.90,
     promotion_min_gain: float = 0.0,
     promotion_mean_gain: float = 0.0005,
-    promotion_corr_threshold_active: float | None = None,
-    promotion_min_delta_threshold: float | None = None,
-    promotion_min_mean_delta_threshold: float | None = None,
 ) -> GeneticProgramming:
     """Build the genetic-programming search strategy."""
 
@@ -101,9 +98,6 @@ def build_search_algorithm(
         active_correlation_threshold=active_correlation_threshold,
         promotion_min_gain=promotion_min_gain,
         promotion_mean_gain=promotion_mean_gain,
-        promotion_corr_threshold_active=promotion_corr_threshold_active,
-        promotion_min_delta_threshold=promotion_min_delta_threshold,
-        promotion_min_mean_delta_threshold=promotion_min_mean_delta_threshold,
     )
     generation_step = _multiobjective_programming_step(components.archive_step)
     recorder = _csv_recorder(csv_path, components.problem)
