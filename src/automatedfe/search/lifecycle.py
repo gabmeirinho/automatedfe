@@ -222,8 +222,12 @@ class SearchLifecycleRecorder:
         additions of the summary row are derived from adjacent snapshots.
         """
 
-        self.snapshots[generation] = dict(snapshot)
         current_keys = self._snapshot_keys(snapshot)
+        if not self._previous_archive_keys.issubset(current_keys):
+            raise ValueError(
+                "Archive snapshots must be monotonic by structural key"
+            )
+        self.snapshots[generation] = dict(snapshot)
         added = len(current_keys - self._previous_archive_keys)
         self._previous_archive_keys = current_keys
         now = monotonic_ns()
@@ -247,6 +251,13 @@ class SearchLifecycleRecorder:
         """Record final archive membership on every candidate row."""
 
         keys = frozenset(archive_keys)
+        if self.snapshots:
+            final_snapshot = self.snapshots[max(self.snapshots)]
+            final_snapshot_keys = self._snapshot_keys(final_snapshot)
+            if keys != final_snapshot_keys:
+                raise ValueError(
+                    "Final archive membership must match the latest archive snapshot"
+                )
         for index, key in enumerate(self._row_keys):
             self.candidate_rows[index]["ArchiveMember"] = key in keys
         if self._candidate_csv_path is not None:

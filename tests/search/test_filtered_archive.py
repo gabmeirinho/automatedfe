@@ -89,6 +89,11 @@ def test_active_set_manager_applies_quality_history_and_peer_filters_in_order():
         item["outcome"] == "rejected" and item["reason"] == "same_generation_peer_cluster"
         for item in step.admission_diagnostics
     )
+    assert any(
+        item["outcome"] == "not_pareto"
+        and item["reason"] == "dominated_in_generation"
+        for item in step.admission_diagnostics
+    )
 
     run(step, problem, [Expression("low")], generation=1)
     assert [item.get_phenotype().name for item in step.history] == ["a", "c"]

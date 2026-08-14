@@ -370,7 +370,7 @@ def test_dataset_search_uses_one_archive_step_and_returns_initial_archive(
     assert len(result) == algorithm.population_size
 
 
-def test_archive_path_persists_the_final_front(tmp_path, archive_dataset):
+def test_archive_path_persists_the_final_archive(tmp_path, archive_dataset):
     archive_path = tmp_path / "archive" / "front.json"
     algorithm = build_search_algorithm(
         EvaluationBudget(4),
@@ -442,6 +442,20 @@ def test_gp_search_emits_generation_histories_and_snapshots(tmp_path, archive_da
         assert "mapping" not in document
         assert document["mapping_ref"] == SNAPSHOT_MAPPING_REFERENCE
         assert document["problem"]["number_of_objectives"] == 4
+    previous_keys = set()
+    for row, (_generation, document) in zip(
+        lifecycle.generation_rows,
+        lifecycle.snapshot_documents,
+        strict=True,
+    ):
+        current_keys = {
+            json.dumps(entry["expression"], sort_keys=True, separators=(",", ":"))
+            for entry in document["expressions"]
+        }
+        assert previous_keys <= current_keys
+        assert row["ArchiveSize"] == len(current_keys)
+        assert row["Added"] == len(current_keys - previous_keys)
+        previous_keys = current_keys
     assert lifecycle.archived_keys == {
         canonical_expression_key(individual.get_phenotype())
         for individual in algorithm.archive_step.archive

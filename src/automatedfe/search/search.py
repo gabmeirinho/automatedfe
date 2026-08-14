@@ -661,6 +661,8 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
                 not individual.get_fitness(self.problem).valid
                 for individual in current_individuals
             )
+            # Persist the permanent archive, not the temporary front used by
+            # the current generation's admission gate.
             lifecycle.on_generation_completed(
                 generation,
                 self.archive_step.archive_snapshot(),

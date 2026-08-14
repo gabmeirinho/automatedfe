@@ -277,13 +277,14 @@ def _archive_expressions_and_objectives(
     algorithm: Any,
     result: Sequence[Any] | None,
 ) -> tuple[tuple[expr, ...], tuple[tuple[float, ...], ...] | None]:
-    """Extract the final archive in the order returned by the search."""
+    """Extract the complete permanent archive in stable admission order."""
 
-    individuals = list(result) if result is not None else []
-    if not individuals:
-        archive = getattr(algorithm, "archive", None)
-        if archive is not None:
-            individuals = list(getattr(archive, "archive", archive))
+    archive_owner = getattr(algorithm, "archive", None)
+    archive_members = getattr(archive_owner, "archive", None)
+    if archive_members is not None:
+        individuals = list(archive_members)
+    else:
+        individuals = list(result) if result is not None else []
 
     expressions = tuple(_as_expression(individual) for individual in individuals)
     objectives: list[tuple[float, ...]] = []
@@ -409,7 +410,7 @@ def _run_feature_search_impl(
     or fitness evaluation. Search setup is completed before the search timer
     starts; held-out evaluation is timed separately. ``csv_path`` records the
     common incremental diagnostics, while ``archive_path`` saves an evaluated
-    strategy's final Pareto archive once. In genetic active-set mode, the
+    strategy's complete permanent archive once. In genetic active-set mode, the
     Pareto archive and promoted active set are fitted and scored separately on
     the held-out split, ``history_path`` persists the complete filtered
     history, and ``active_archive_path`` persists the versioned active

@@ -156,7 +156,51 @@ def test_archive_step_delegates_front_calculation_to_genetic_engine(monkeypatch)
     assert calls[0][1] == [False, False, False, True]
 
 
-def test_archive_step_merges_generations_into_one_global_front():
+def test_archive_step_rejects_dominated_incoming_candidates():
+    scores = {
+        "old": (0.8, 0.8, 0.8, 1.0),
+        "dominated": (0.7, 0.7, 0.7, 2.0),
+    }
+    problem = make_problem(scores)
+    step = ArchiveStep()
+
+    run_archive_step(
+        step,
+        problem,
+        evaluated_individuals(problem, {"old": scores["old"]}),
+    )
+    run_archive_step(
+        step,
+        problem,
+        evaluated_individuals(problem, {"dominated": scores["dominated"]}),
+    )
+
+    assert archived_names(step) == ["old"]
+
+
+def test_archive_step_admits_a_non_dominated_tradeoff():
+    scores = {
+        "old": (0.8, 0.8, 0.8, 1.0),
+        "tradeoff": (0.9, 0.7, 0.9, 1.5),
+    }
+    problem = make_problem(scores)
+    step = ArchiveStep()
+
+    run_archive_step(
+        step,
+        problem,
+        evaluated_individuals(problem, {"old": scores["old"]}),
+    )
+    run_archive_step(
+        step,
+        problem,
+        evaluated_individuals(problem, {"tradeoff": scores["tradeoff"]}),
+    )
+
+    assert archived_names(step) == ["old", "tradeoff"]
+
+
+def test_archive_step_admits_later_winner_without_evicting_older_members():
     scores = {
         "old": (0.8, 0.8, 0.8, 1.0),
         "tradeoff": (0.9, 0.7, 0.9, 1.5),
@@ -179,7 +223,7 @@ def test_archive_step_merges_generations_into_one_global_front():
         evaluated_individuals(problem, {"winner": scores["winner"]}),
     )
 
-    assert archived_names(step) == ["winner"]
+    assert archived_names(step) == ["old", "tradeoff", "winner"]
 
 
 def test_archive_step_excludes_invalid_candidates_but_yields_them():
@@ -415,7 +459,7 @@ def test_archive_writes_are_atomic(tmp_path, monkeypatch):
     load_archive(archive_path)
 
 
-def test_archive_auto_snapshot_overwrites_with_only_the_latest_front(tmp_path):
+def test_archive_auto_snapshot_retains_permanent_membership(tmp_path):
     archive_path = tmp_path / "archive.json"
     step = ArchiveStep(archive_path=archive_path, mapping=LABEL_MAPPING)
     old = Add(MeanAmount(0), CountTotal(0))
@@ -433,8 +477,50 @@ def test_archive_auto_snapshot_overwrites_with_only_the_latest_front(tmp_path):
 
     run_archive_step(step, problem, grammar_evaluated_individuals(problem, [winner]))
     assert [str(expression) for expression in load_archive(archive_path).expressions] == [
-        str(winner)
+        str(old),
+        str(winner),
     ]
+
+
+def test_invalid_archive_refresh_retains_finite_evidence_and_round_trips(tmp_path):
+    expression = Add(MeanAmount(0), CountTotal(0))
+    objectives = (0.8, 0.8, 0.8, 1.0)
+    problem = make_grammar_problem({str(expression): objectives})
+    step = ArchiveStep(mapping=LABEL_MAPPING)
+    run_archive_step(
+        step,
+        problem,
+        grammar_evaluated_individuals(problem, [expression]),
+    )
+
+    class InvalidRefreshEvaluator:
+        def __init__(self):
+            self.calls = 0
+
+        def evaluate(self, received_problem, candidates):
+            for candidate in candidates:
+                self.calls += 1
+                candidate.set_fitness(
+                    received_problem,
+                    Fitness([float("nan")] * 4, valid=False),
+                )
+                yield candidate
+
+    evaluator = InvalidRefreshEvaluator()
+    step.reevaluate_archive(problem, evaluator)
+
+    assert evaluator.calls == 1
+    assert [str(individual.get_phenotype()) for individual in step.archive] == [
+        str(expression)
+    ]
+    assert step.archive[0].get_fitness(problem).valid is True
+    assert tuple(step.archive[0].get_fitness(problem).fitness_components) == objectives
+
+    archive_path = tmp_path / "archive.json"
+    step.save(archive_path)
+    snapshot = load_archive(archive_path)
+    assert snapshot.expressions == (expression,)
+    assert snapshot.objectives == (objectives,)
 
 
 def test_save_requires_an_evaluated_population(tmp_path):

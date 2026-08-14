@@ -186,7 +186,7 @@ def _archive_changes(ax: plt.Axes, generations: pd.DataFrame) -> None:
     ax.bar(x, generations["Added"], alpha=0.42, label="Added")
     _finish(
         ax,
-        title=f"Archive membership ({len(generations):,} generations)",
+        title=f"Permanent archive membership ({len(generations):,} generations)",
         xlabel="Generation",
         ylabel="Feature count",
     )

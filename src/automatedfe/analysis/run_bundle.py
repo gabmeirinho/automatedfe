@@ -859,6 +859,7 @@ def _load_run_bundle(
     mapping = manifest["inputs"]["mapping"]["mapping"]  # type: ignore[index]
     snapshots: list[dict[str, object]] = []
     snapshot_generations: list[int] = []
+    previous_snapshot_keys: frozenset[str] = frozenset()
     for index, relative in enumerate(snapshot_names):
         snapshot_path = _safe_manifest_relative_path(
             root, relative, f"archive_snapshots[{index}]"
@@ -878,6 +879,16 @@ def _load_run_bundle(
             raise RunBundleValidationError(
                 f"Invalid bundle artifact 'archive_snapshots[{index}]': {error}"
             ) from error
+        current_snapshot_keys = frozenset(
+            canonical_json_text(entry["expression"])
+            for entry in document.get("expressions", ())
+            if isinstance(entry, Mapping) and "expression" in entry
+        )
+        if not previous_snapshot_keys.issubset(current_snapshot_keys):
+            raise RunBundleValidationError(
+                "Bundle archive snapshots are not monotonic by structural key"
+            )
+        previous_snapshot_keys = current_snapshot_keys
         snapshots.append(document)
         name = snapshot_path.name
         if not (name.startswith("generation_") and name.endswith(".json")):
