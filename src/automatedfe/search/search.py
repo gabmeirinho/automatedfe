@@ -47,11 +47,18 @@ from ..features.feature_types import TxFeature
 from ..evaluation.fitness import (
     DEFAULT_N_SPLITS,
     ActiveResidualEvaluator,
+    MaterializationError,
     NumericalFitnessError,
     RandomForestFitness,
     ResidualEvaluator,
 )
 from ..features.grammar import build_grammar, collect_features, expr
+from .lifecycle import (
+    EVALUATED,
+    INVALID,
+    MATERIALIZATION_FAILED,
+    SearchLifecycleRecorder,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -232,12 +239,29 @@ def canonical_expression_key(expression: object) -> str:
 
 
 class CandidateEvaluator(SequentialEvaluator):
-    """Turn candidate-local numerical failures into invalid fitness."""
+    """Turn candidate-local numerical failures into invalid fitness.
 
-    def __init__(self, baseline_version_provider: Callable[[], int] | None = None) -> None:
+    Candidate-local materialization failures raise
+    :class:`MaterializationError` and are recorded as ``materialization_failed``
+    events: they never count as completed evaluations, so failed
+    materializations cannot masquerade as completed candidates. Evaluations
+    that complete with an invalid fitness are recorded as ``invalid`` events
+    and retain the candidate's measured materialization duration when one is
+    available.
+    """
+
+    def __init__(
+        self,
+        baseline_version_provider: Callable[[], int] | None = None,
+        *,
+        lifecycle: SearchLifecycleRecorder | None = None,
+        materialization_duration_provider: Callable[[], float | None] | None = None,
+    ) -> None:
         super().__init__()
         self.invalid_reasons: dict[str, str] = {}
         self.baseline_version_provider = baseline_version_provider
+        self.lifecycle = lifecycle
+        self.materialization_duration_provider = materialization_duration_provider
 
     @property
     def baseline_version(self) -> int | None:
@@ -253,6 +277,24 @@ class CandidateEvaluator(SequentialEvaluator):
             return
         individual.fitness_store.pop(problem, None)
 
+    def _materialization_duration(self) -> float | None:
+        provider = self.materialization_duration_provider
+        if provider is None:
+            return None
+        try:
+            value = provider()
+        except (TypeError, ValueError):
+            return None
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            converted = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(converted) or converted < 0:
+            return None
+        return converted
+
     def evaluate_async(self, problem: Problem, individuals: Iterable[Individual]):
         for individual in individuals:
             self._invalidate_if_stale(individual, problem)
@@ -262,8 +304,13 @@ class CandidateEvaluator(SequentialEvaluator):
 
             key = canonical_expression_key(individual.get_phenotype())
             reason = None
+            status = EVALUATED
             try:
                 fitness = self.eval_single(problem, individual)
+            except MaterializationError as error:
+                fitness = problem.get_invalid_fitness()
+                reason = f"{type(error).__name__}: {error}"
+                status = MATERIALIZATION_FAILED
             except (
                 InvalidFitnessException,
                 ArithmeticError,
@@ -271,6 +318,7 @@ class CandidateEvaluator(SequentialEvaluator):
             ) as error:
                 fitness = problem.get_invalid_fitness()
                 reason = f"{type(error).__name__}: {error}"
+                status = INVALID
 
             components = fitness.fitness_components
             try:
@@ -284,6 +332,8 @@ class CandidateEvaluator(SequentialEvaluator):
             if not valid:
                 fitness = problem.get_invalid_fitness()
                 reason = reason or "invalid objective vector"
+                if status == EVALUATED:
+                    status = INVALID
             if reason is not None:
                 self.invalid_reasons[key] = reason
 
@@ -297,8 +347,48 @@ class CandidateEvaluator(SequentialEvaluator):
             version = self.baseline_version
             if version is not None:
                 individual.metadata["evaluated_baseline_version"] = version
-            self.register_evaluation(individual, problem)
+            self._record_lifecycle_evaluation(
+                individual,
+                problem,
+                status=status,
+                valid=valid,
+                error=reason or "",
+            )
+            if status != MATERIALIZATION_FAILED:
+                self.register_evaluation(individual, problem)
             yield individual
+
+    def _record_lifecycle_evaluation(
+        self,
+        individual: Individual,
+        problem: Problem,
+        *,
+        status: str,
+        valid: bool,
+        error: str,
+    ) -> None:
+        lifecycle = self.lifecycle
+        if lifecycle is None:
+            return
+        if status == MATERIALIZATION_FAILED:
+            lifecycle.on_materialization_failed(individual, error)
+            return
+        objectives: tuple[float, ...] | None = None
+        duration: float | None = None
+        if valid:
+            objectives = tuple(
+                float(value)
+                for value in individual.get_fitness(problem).fitness_components
+            )
+        elif status == INVALID:
+            duration = self._materialization_duration()
+        lifecycle.on_candidate_evaluated(
+            individual,
+            status=status,
+            objectives=objectives,
+            duration=duration,
+            error=error,
+        )
 
 
 class ArchiveProgressTracker(ProgressTracker):
@@ -311,6 +401,7 @@ class ArchiveProgressTracker(ProgressTracker):
         *,
         evaluator: Evaluator | None = None,
         baseline_version_provider: Callable[[], int] | None = None,
+        materialization_duration_provider: Callable[[], float | None] | None = None,
         recorders: list[object] | None = None,
     ) -> None:
         self.start_time = monotonic_ns()
@@ -320,6 +411,7 @@ class ArchiveProgressTracker(ProgressTracker):
             if evaluator is not None
             else CandidateEvaluator(
                 baseline_version_provider=baseline_version_provider,
+                materialization_duration_provider=materialization_duration_provider,
             )
         )
         self.recorders = [] if recorders is None else recorders
@@ -387,6 +479,7 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
         active_set_manager: ActiveSetManager | None = None,
         candidate_generator: CandidateGenerator | None = None,
         deduplicate: bool = False,
+        lifecycle: SearchLifecycleRecorder | None = None,
         **kwargs: object,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -397,6 +490,9 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
         self.active_set_manager = active_set_manager
         self.candidate_generator = candidate_generator
         self.deduplicate = deduplicate
+        self.lifecycle = (
+            lifecycle if lifecycle is not None else SearchLifecycleRecorder()
+        )
         self._seen: set[str] = set()
         self.generated_count = 0
         self.duplicate_count = 0
@@ -512,9 +608,11 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
         accepted: list[PhenotypicIndividual] = []
         for individual in individuals:
             self.generated_count += 1
+            self.lifecycle.on_candidate_generated(individual)
             key = canonical_expression_key(individual.get_phenotype())
             if self.deduplicate and key in self._seen:
                 self.duplicate_count += 1
+                self.lifecycle.on_candidate_duplicate(individual)
                 continue
             self._seen.add(key)
             self.accepted_count += 1
@@ -522,10 +620,16 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
         return accepted
 
     def perform_search(self) -> list[Individual] | None:
+        lifecycle = self.lifecycle
+        lifecycle.on_search_started()
+        evaluator = getattr(self.tracker, "evaluator", None)
+        if hasattr(evaluator, "lifecycle"):
+            evaluator.lifecycle = lifecycle
         generation = 0
         current_individuals: list[PhenotypicIndividual] = []
 
         while generation == 0 or not self.is_done():
+            lifecycle.on_generation_started(generation)
             if generation > 0:
                 self._promote_at_boundary(
                     generation,
@@ -545,8 +649,13 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
                     break
                 generation += 1
                 continue
+            accepted = self.precompute_population(accepted, generation)
+            if not accepted:
+                if self.grammar_exhausted:
+                    break
+                generation += 1
+                continue
 
-            self.precompute_population(accepted, generation)
             archived = list(
                 self.archive_step.apply(
                     self.problem,
@@ -575,6 +684,10 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
                 not individual.get_fitness(self.problem).valid
                 for individual in current_individuals
             )
+            lifecycle.on_generation_completed(
+                generation,
+                self.archive_step.archive_snapshot(),
+            )
             generation += 1
 
         if self.active_set_manager is not None:
@@ -582,27 +695,49 @@ class MaterializingArchiveSearch(GeneticProgrammingTwoPhase):
             self.active_individuals = list(
                 self.active_set_manager.active_individuals
             )
+        lifecycle.on_search_completed(
+            canonical_expression_key(individual.get_phenotype())
+            for individual in self.archive_step.archive
+        )
         return list(self.archive_step.archive)
 
     def precompute_population(
         self,
         individuals: list[PhenotypicIndividual],
         generation: int,
-    ) -> None:
-        """Prepare generated individuals before their evaluation."""
+    ) -> list[PhenotypicIndividual]:
+        """Prepare generated individuals before their evaluation.
+
+        Candidates that fail to materialize are recorded as
+        ``materialization_failed`` and excluded from the generation: they are
+        never evaluated and never reach the archive. Returns the
+        materializable subset in the original order.
+        """
 
         self._promote_at_boundary(
             generation,
             stale_individuals=individuals,
         )
-        self.last_individuals = list(individuals)
-        phenotypes = [individual.get_phenotype() for individual in individuals]
+        keep: list[PhenotypicIndividual] = []
+        for individual in individuals:
+            try:
+                self.fitness_evaluator.prepare_population(
+                    [individual.get_phenotype()]
+                )
+            except MaterializationError as error:
+                self.lifecycle.on_materialization_failed(
+                    individual,
+                    error=str(error),
+                )
+            else:
+                keep.append(individual)
+        self.last_individuals = list(keep)
         logger.info(
             "Materializing generation %d: %d features",
             generation,
-            len(phenotypes),
+            len(keep),
         )
-        self.fitness_evaluator.prepare_population(phenotypes)
+        return keep
 
 
 def _build_evaluated_search(
@@ -671,6 +806,13 @@ def _build_evaluated_search(
             if components.active_set_manager is not None
             else None
         ),
+        materialization_duration_provider=(
+            lambda: getattr(
+                components.fitness_evaluator,
+                "last_materialization_duration",
+                None,
+            )
+        ),
         recorders=[] if recorder is None else [recorder],
     )
     return MaterializingArchiveSearch(
@@ -697,6 +839,7 @@ __all__ = [
     "CandidateEvaluator",
     "CandidateGenerator",
     "MaterializingArchiveSearch",
+    "SearchLifecycleRecorder",
     "_SearchComponents",
     "_build_evaluated_search",
     "_build_search_components",

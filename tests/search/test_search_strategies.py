@@ -1,3 +1,4 @@
+import json
 from itertools import islice
 
 import pytest
@@ -7,6 +8,7 @@ import automatedfe.search.enumerative_search as enumerative_module
 import automatedfe.search.random_search as random_module
 import automatedfe.search.search as shared_module
 import automatedfe.search.unbound_enumerative_search as unbound_module
+from automatedfe.analysis.artifacts import canonical_json_text
 from automatedfe.features.grammar import (
     Add,
     CountCategory,
@@ -22,6 +24,10 @@ from automatedfe.search import (
     canonical_expression_key,
     collect_unique_expressions,
     iter_bounded_expressions,
+)
+from automatedfe.search.archive import (
+    SNAPSHOT_MAPPING_REFERENCE,
+    load_snapshot,
 )
 
 LABEL_MAPPING = {
@@ -228,3 +234,103 @@ def test_unbound_search_preserves_enumeration_order(monkeypatch):
     results = unbound.search()
 
     assert results == [MeanAmount(0), MeanAmount(1)]
+
+
+def test_evaluated_strategy_emits_complete_generation_histories(
+    tmp_path,
+    evaluated_strategy_dependencies,
+):
+    search = build_enumerative_search(
+        EvaluationBudget(3),
+        mapping=LABEL_MAPPING,
+        mmap_dir=tmp_path / "mmap",
+        dataset_path=tmp_path / "dataset.parquet",
+    )
+    search.search()
+
+    lifecycle = search.lifecycle
+    assert len(lifecycle.generation_rows) == 3
+    assert sorted(lifecycle.snapshots) == [0, 1, 2]
+    assert [row["Generation"] for row in lifecycle.generation_rows] == [0, 1, 2]
+    for row in lifecycle.generation_rows:
+        assert row["Generated"] == 1
+        assert row["Unique"] == 1
+        assert row["Duplicate"] == 0
+        assert row["Invalid"] == 0
+        assert row["Evaluated"] == 1
+        assert row["DurationSeconds"] >= 0
+        assert row["CumulativeRuntimeSeconds"] >= 0
+
+    cumulative_runtime = [
+        row["CumulativeRuntimeSeconds"] for row in lifecycle.generation_rows
+    ]
+    assert cumulative_runtime == sorted(cumulative_runtime)
+    evaluated_cumulative = []
+    running = 0
+    for row in lifecycle.generation_rows:
+        running += row["Evaluated"]
+        evaluated_cumulative.append(running)
+    assert evaluated_cumulative == sorted(evaluated_cumulative)
+    assert running == search.tracker.get_number_evaluations()
+
+    previous_keys: frozenset[str] = frozenset()
+    for row, (generation, document) in zip(
+        lifecycle.generation_rows,
+        lifecycle.snapshot_documents,
+    ):
+        assert generation == row["Generation"]
+        assert "mapping" not in document
+        assert document["mapping_ref"] == SNAPSHOT_MAPPING_REFERENCE
+        current_keys = frozenset(
+            canonical_json_text(entry["expression"])
+            for entry in document["expressions"]
+        )
+        assert row["Added"] == len(current_keys - previous_keys)
+        assert row["Removed"] == len(previous_keys - current_keys)
+        assert row["ArchiveSize"] == len(current_keys)
+        previous_keys = current_keys
+
+    snapshot_path = tmp_path / "snapshots" / "generation_000000.json"
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text(
+        json.dumps(lifecycle.snapshots[0]),
+    )
+    snapshot = load_snapshot(snapshot_path, LABEL_MAPPING)
+    assert len(snapshot) == 1
+
+    assert lifecycle.archived_keys == {
+        canonical_expression_key(individual.get_phenotype())
+        for individual in search.archive_step.archive
+    }
+
+
+def test_lifecycle_observation_does_not_change_search_results(
+    tmp_path,
+    evaluated_strategy_dependencies,
+):
+    common = {
+        "mapping": LABEL_MAPPING,
+        "mmap_dir": tmp_path / "mmap",
+        "dataset_path": tmp_path / "dataset.parquet",
+    }
+
+    def run():
+        search = build_enumerative_search(EvaluationBudget(3), **common)
+        search.search()
+        return search
+
+    first = run()
+    second = run()
+
+    def archive_keys(search):
+        return [
+            canonical_expression_key(individual.get_phenotype())
+            for individual in search.archive_step.archive
+        ]
+
+    assert archive_keys(first) == archive_keys(second)
+    assert [
+        row["Evaluated"] for row in first.lifecycle.generation_rows
+    ] == [row["Evaluated"] for row in second.lifecycle.generation_rows]
+    assert first.lifecycle.archived_keys == second.lifecycle.archived_keys
+    assert first.lifecycle.archived_keys == frozenset(archive_keys(first))

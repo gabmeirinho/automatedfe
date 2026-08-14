@@ -4,15 +4,27 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from geneticengine.solutions.individual import ConcreteIndividual
 
 import automatedfe.search.runner as runner_module
 import automatedfe.search.search as shared_search_module
-from automatedfe.search.archive import load_archive
+from automatedfe.analysis.artifacts import (
+    CANDIDATES_COLUMNS,
+    load_run_manifest,
+)
+from automatedfe.evaluation import MaterializationError, NumericalFitnessError
+from automatedfe.features.grammar import MeanAmount, TotalAmount
+from automatedfe.search.archive import (
+    SNAPSHOT_MAPPING_REFERENCE,
+    load_archive,
+    load_snapshot,
+)
 from automatedfe.search.runner import (
     DIAGNOSTIC_COLUMNS,
     SearchStrategy,
     run_feature_search,
 )
+from automatedfe.search.search import canonical_expression_key
 
 
 LABEL_MAPPING = {
@@ -41,6 +53,10 @@ class _FinalEvaluator:
             models=(),
             expressions=tuple(expressions),
         )
+
+
+def test_diagnostics_columns_follow_the_analysis_candidates_schema():
+    assert DIAGNOSTIC_COLUMNS == CANDIDATES_COLUMNS
 
 
 def test_evaluation_free_runner_writes_common_generated_rows(tmp_path, monkeypatch):
@@ -174,7 +190,7 @@ def test_evaluated_runner_finalizes_membership_and_saves_one_archive(
     rows = list(csv.DictReader(csv_path.open(newline="")))
     snapshot = load_archive(archive_path, mapping=LABEL_MAPPING)
     assert rows
-    assert {row["Generation"] for row in rows} == {""}
+    assert all(row["Generation"] for row in rows)
     assert {row["Status"] for row in rows} == {"evaluated"}
     assert sum(row["ArchiveMember"] == "True" for row in rows) == len(snapshot)
     assert snapshot.expressions == result.expressions
@@ -445,3 +461,308 @@ def test_active_runner_persists_history_and_active_snapshot(tmp_path, monkeypatc
     assert saved["active"][0] == active_path.resolve()
     assert saved["history"][1] == LABEL_MAPPING
     assert saved["active"][1] == LABEL_MAPPING
+
+
+def test_loose_runner_outputs_are_not_structured_runs(tmp_path, monkeypatch):
+    class StubMaterializer:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+    monkeypatch.setattr(runner_module, "FeatureMaterializer", StubMaterializer)
+    monkeypatch.setattr(
+        runner_module,
+        "_build_final_evaluator",
+        lambda *_args, **_kwargs: _FinalEvaluator([]),
+    )
+    csv_path = tmp_path / "diagnostics.csv"
+
+    run_feature_search(
+        "enumerative_without_archive",
+        candidate_count=1,
+        dataset_path=tmp_path / "dataset.parquet",
+        mapping=LABEL_MAPPING,
+        mmap_dir=tmp_path / "mmap",
+        csv_path=csv_path,
+    )
+
+    assert csv_path.is_file()
+    assert not any(tmp_path.rglob("manifest.json"))
+    assert not any(tmp_path.rglob("*.sha256"))
+    with pytest.raises(ValueError, match="Not a structured run"):
+        load_run_manifest(tmp_path)
+
+
+class _FiniteGenerator:
+    """Yield one deterministic batch of candidates and then exhaust."""
+
+    def __init__(self, expressions):
+        self.expressions = list(expressions)
+        self.exhausted = False
+
+    def generate(self, _previous, _generation):
+        if self.exhausted:
+            return []
+        self.exhausted = True
+        return [ConcreteIndividual(expression) for expression in self.expressions]
+
+
+def _evaluated_runner_harness(
+    tmp_path,
+    monkeypatch,
+    *,
+    expressions,
+    fitness_cls,
+):
+    """Run one evaluated strategy with a fixed candidate batch and stub fitness."""
+
+    received = []
+
+    class StubMaterializer:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+    monkeypatch.setattr(shared_search_module, "FeatureMaterializer", StubMaterializer)
+    monkeypatch.setattr(shared_search_module, "ResidualEvaluator", fitness_cls)
+    monkeypatch.setattr(
+        runner_module,
+        "_build_final_evaluator",
+        lambda *_args, **_kwargs: _FinalEvaluator(received),
+    )
+    original_builder = runner_module.build_enumerative_search
+
+    def build_with_batch(*args, **kwargs):
+        search = original_builder(*args, **kwargs)
+        search.candidate_generator = _FiniteGenerator(expressions)
+        return search
+
+    monkeypatch.setattr(runner_module, "build_enumerative_search", build_with_batch)
+    csv_path = tmp_path / "diagnostics.csv"
+    result = run_feature_search(
+        "enumerative",
+        time_budget_seconds=0.001,
+        dataset_path=tmp_path / "dataset.parquet",
+        mapping=LABEL_MAPPING,
+        mmap_dir=tmp_path / "mmap",
+        csv_path=csv_path,
+    )
+    rows = list(csv.DictReader(csv_path.open(newline="")))
+    return result, rows
+
+
+class _ValidFitness:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def prepare_population(self, _expressions):
+        pass
+
+    def objective_vector(self, _expression):
+        return [0.1, 0.2, 0.3, 0.01]
+
+
+def test_runner_records_duplicates_without_evaluating_twice(tmp_path, monkeypatch):
+    result, rows = _evaluated_runner_harness(
+        tmp_path,
+        monkeypatch,
+        expressions=[MeanAmount(0), MeanAmount(0), MeanAmount(1)],
+        fitness_cls=_ValidFitness,
+    )
+
+    assert len(rows) == 3
+    assert {row["Status"] for row in rows} == {"duplicate", "evaluated"}
+    assert sum(row["Status"] == "duplicate" for row in rows) == 1
+    assert sum(row["Status"] == "evaluated" for row in rows) == 2
+    assert all(row["ArchiveMember"] == "True" for row in rows)
+    assert result.generated_count == 3
+    assert result.duplicate_count == 1
+    assert result.accepted_count == 2
+    assert result.evaluated_count == 2
+
+    assert len(result.lifecycle.generation_rows) == 1
+    generation = result.lifecycle.generation_rows[0]
+    assert generation["Generated"] == 3
+    assert generation["Unique"] == 2
+    assert generation["Duplicate"] == 1
+    assert generation["Invalid"] == 0
+    assert generation["Evaluated"] == 2
+    assert generation["ArchiveSize"] == 2
+    assert generation["Added"] == 2
+    assert generation["Removed"] == 0
+    assert generation["DurationSeconds"] >= 0
+    assert generation["CumulativeRuntimeSeconds"] >= 0
+
+
+class _MaterializationFailingFitness:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def prepare_population(self, expressions):
+        if str(expressions[0]) == str(MeanAmount(1)):
+            raise MaterializationError(
+                f"cannot materialize {expressions[0]!s}: boom"
+            )
+
+    def objective_vector(self, _expression):
+        return [0.1, 0.2, 0.3, 0.01]
+
+
+def test_runner_distinguishes_materialization_failure_from_invalid(
+    tmp_path,
+    monkeypatch,
+):
+    result, rows = _evaluated_runner_harness(
+        tmp_path,
+        monkeypatch,
+        expressions=[MeanAmount(0), MeanAmount(1)],
+        fitness_cls=_MaterializationFailingFitness,
+    )
+
+    by_expression = {row["Expression"]: row for row in rows}
+    failed = by_expression[str(MeanAmount(1))]
+    assert failed["Status"] == "materialization_failed"
+    assert "cannot materialize" in failed["Error"]
+    assert failed["MaterializationTime"] == ""
+    assert all(
+        not failed[column] for column in ("Split1", "Split2", "Split3")
+    )
+    assert failed["ArchiveMember"] == "False"
+    assert by_expression[str(MeanAmount(0))]["Status"] == "evaluated"
+    assert by_expression[str(MeanAmount(0))]["ArchiveMember"] == "True"
+
+    assert result.evaluated_count == 1
+    assert result.invalid_count == 0
+    generation = result.lifecycle.generation_rows[0]
+    assert generation["Generated"] == 2
+    assert generation["Unique"] == 2
+    assert generation["Evaluated"] == 1
+    assert generation["Invalid"] == 0
+    assert generation["ArchiveSize"] == 1
+
+
+class _InvalidWithDurationFitness:
+    def __init__(self, *_args, **_kwargs):
+        self.last_materialization_duration = None
+
+    def prepare_population(self, _expressions):
+        pass
+
+    def objective_vector(self, expression):
+        self.last_materialization_duration = 0.42
+        if str(expression) == str(MeanAmount(1)):
+            raise NumericalFitnessError("fold scoring exploded")
+        return [0.1, 0.2, 0.3, 0.01]
+
+
+def test_invalid_after_materialization_retains_finite_duration(
+    tmp_path,
+    monkeypatch,
+):
+    result, rows = _evaluated_runner_harness(
+        tmp_path,
+        monkeypatch,
+        expressions=[MeanAmount(0), MeanAmount(1)],
+        fitness_cls=_InvalidWithDurationFitness,
+    )
+
+    by_expression = {row["Expression"]: row for row in rows}
+    invalid = by_expression[str(MeanAmount(1))]
+    assert invalid["Status"] == "invalid"
+    assert invalid["MaterializationTime"] == "0.42"
+    assert "NumericalFitnessError" in invalid["Error"]
+    assert all(not invalid[column] for column in ("Split1", "Split2", "Split3"))
+    assert invalid["ArchiveMember"] == "False"
+    assert by_expression[str(MeanAmount(0))]["Status"] == "evaluated"
+    assert by_expression[str(MeanAmount(0))]["MaterializationTime"] == "0.01"
+
+    assert result.invalid_count == 1
+    generation = result.lifecycle.generation_rows[0]
+    assert generation["Evaluated"] == 2
+    assert generation["Invalid"] == 1
+
+
+def test_runner_lifecycle_emits_generation_history_and_mapping_free_snapshots(
+    tmp_path,
+    monkeypatch,
+):
+    expressions = [MeanAmount(0), MeanAmount(1), TotalAmount(1)]
+    result, rows = _evaluated_runner_harness(
+        tmp_path,
+        monkeypatch,
+        expressions=expressions,
+        fitness_cls=_ValidFitness,
+    )
+
+    lifecycle = result.lifecycle
+    assert len(lifecycle.generation_rows) == 1
+    assert sorted(lifecycle.snapshots) == [0]
+    assert lifecycle.generation_rows[0]["Generation"] == 0
+    assert lifecycle.generation_rows[0]["ArchiveSize"] == 3
+    assert lifecycle.generation_rows[0]["Added"] == 3
+
+    generation, document = lifecycle.snapshot_documents[0]
+    assert generation == 0
+    assert "mapping" not in document
+    assert document["mapping_ref"] == SNAPSHOT_MAPPING_REFERENCE
+
+    snapshot_path = tmp_path / "snapshots" / "generation_000000.json"
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text(json.dumps(document))
+    snapshot = load_snapshot(snapshot_path, LABEL_MAPPING)
+    assert len(snapshot) == 3
+    assert [str(expression) for expression in snapshot.expressions] == [
+        str(expression) for expression in result.expressions
+    ]
+    assert snapshot.minimize == (False, False, False, True)
+    assert lifecycle.archived_keys == {
+        canonical_expression_key(expression) for expression in result.expressions
+    }
+    assert all(row["ArchiveMember"] == "True" for row in rows)
+
+
+class _ExplodingFitness:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def prepare_population(self, _expressions):
+        pass
+
+    def objective_vector(self, expression):
+        if str(expression) == str(MeanAmount(1)):
+            raise RuntimeError("search crashed")
+        return [0.1, 0.2, 0.3, 0.01]
+
+
+def test_interrupted_lifecycle_csv_remains_readable(tmp_path, monkeypatch):
+    csv_path = tmp_path / "diagnostics.csv"
+
+    class StubMaterializer:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+    monkeypatch.setattr(shared_search_module, "FeatureMaterializer", StubMaterializer)
+    monkeypatch.setattr(shared_search_module, "ResidualEvaluator", _ExplodingFitness)
+    original_builder = runner_module.build_enumerative_search
+
+    def build_with_batch(*args, **kwargs):
+        search = original_builder(*args, **kwargs)
+        search.candidate_generator = _FiniteGenerator(
+            [MeanAmount(0), MeanAmount(1)]
+        )
+        return search
+
+    monkeypatch.setattr(runner_module, "build_enumerative_search", build_with_batch)
+
+    with pytest.raises(RuntimeError, match="search crashed"):
+        run_feature_search(
+            "enumerative",
+            time_budget_seconds=0.001,
+            dataset_path=tmp_path / "dataset.parquet",
+            mapping=LABEL_MAPPING,
+            mmap_dir=tmp_path / "mmap",
+            csv_path=csv_path,
+        )
+
+    rows = list(csv.DictReader(csv_path.open(newline="")))
+    assert [row["Expression"] for row in rows] == [str(MeanAmount(0))]
+    assert rows[0]["Status"] == "evaluated"
+    assert rows[0]["ArchiveMember"] == ""

@@ -132,6 +132,8 @@ _COMPATIBILITY_EXPORTS = {
             "write_summary_json",
         )
     },
+    # Lifecycle observation exports.
+    "SearchLifecycleRecorder": ("automatedfe.search.lifecycle", "SearchLifecycleRecorder"),
     # Search strategy exports are compatibility aliases for the canonical
     # ``automatedfe.search`` package.
     **{
@@ -244,6 +246,7 @@ __all__ = [
     "RowWindow",
     "RunnerDiagnosticsRecorder",
     "SafeDiv",
+    "SearchLifecycleRecorder",
     "SearchRunResult",
     "SearchStrategy",
     "StdAmount",

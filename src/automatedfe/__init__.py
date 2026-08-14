@@ -53,6 +53,7 @@ from .search.runner import (
     run_feature_search,
     write_summary_json,
 )
+from .search.lifecycle import SearchLifecycleRecorder
 from .evaluation import (
     ActiveResidualEvaluator,
     ActiveResidualFitness,
@@ -123,6 +124,7 @@ __all__ = [
     "ResidualEvaluator",
     "ResidualFitness",
     "RunnerDiagnosticsRecorder",
+    "SearchLifecycleRecorder",
     "SearchRunResult",
     "SearchStrategy",
     "absolute_pearson_correlation",

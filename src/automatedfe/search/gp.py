@@ -115,6 +115,13 @@ def build_search_algorithm(
             if components.active_set_manager is not None
             else None
         ),
+        materialization_duration_provider=(
+            lambda: getattr(
+                components.fitness_evaluator,
+                "last_materialization_duration",
+                None,
+            )
+        ),
         recorders=[] if recorder is None else [recorder],
     )
 
