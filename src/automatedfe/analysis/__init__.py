@@ -101,6 +101,17 @@ from .run_tables import (
     write_evaluation_tables,
     write_final_evaluation_tables,
 )
+from .run_report import (
+    FEATURE_LABEL_MODES,
+    REPORT_ASSETS_DIRECTORY,
+    REPORT_FILENAME,
+    REPORT_FORMAT,
+    REPORT_METADATA_FILENAME,
+    REPORT_SCHEMA_VERSION,
+    render_report,
+    render_run_report,
+    rerender_run_report,
+)
 
 __all__ = [
     "ARCHIVE_SNAPSHOTS_DIRECTORY",
@@ -187,4 +198,13 @@ __all__ = [
     "read_final_evaluation_tables",
     "write_evaluation_tables",
     "write_final_evaluation_tables",
+    "FEATURE_LABEL_MODES",
+    "REPORT_ASSETS_DIRECTORY",
+    "REPORT_FILENAME",
+    "REPORT_FORMAT",
+    "REPORT_METADATA_FILENAME",
+    "REPORT_SCHEMA_VERSION",
+    "render_report",
+    "render_run_report",
+    "rerender_run_report",
 ]
