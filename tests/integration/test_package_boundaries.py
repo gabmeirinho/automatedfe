@@ -28,6 +28,8 @@ def test_domain_namespaces_import_and_preserve_public_exports():
     assert automatedfe.search.SearchStrategy is automatedfe.SearchStrategy
     assert automatedfe.search.run_feature_search is automatedfe.run_feature_search
     assert automatedfe.search.ArchiveSnapshot is automatedfe.ArchiveSnapshot
+    assert not hasattr(automatedfe, "write_summary_json")
+    assert not hasattr(automatedfe.search, "write_summary_json")
 
 
 def test_data_pipeline_implementations_have_canonical_module_paths():

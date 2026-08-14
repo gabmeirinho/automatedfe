@@ -76,10 +76,10 @@ from .unbound_enumerative_search import (
 from .runner import (
     DIAGNOSTIC_COLUMNS,
     RunnerDiagnosticsRecorder,
+    SearchAnalysisError,
     SearchRunResult,
     SearchStrategy,
     run_feature_search,
-    write_summary_json,
 )
 
 __all__ = [
@@ -123,6 +123,7 @@ __all__ = [
     "MaterializingArchiveSearch",
     "MaterializingGeneticProgramming",
     "RunnerDiagnosticsRecorder",
+    "SearchAnalysisError",
     "SearchLifecycleRecorder",
     "SearchRunResult",
     "SearchStrategy",
@@ -148,5 +149,4 @@ __all__ = [
     "validate_archive_quality_threshold",
     "validate_correlation_threshold",
     "write_snapshot",
-    "write_summary_json",
 ]

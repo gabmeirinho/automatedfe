@@ -6,18 +6,18 @@ import argparse
 import math
 from collections.abc import Sequence
 from pathlib import Path
+
 from automatedfe.data.encoding import DEFAULT_MAPPING_OUTPUT
-from automatedfe.search import (
-    DEFAULT_MAX_DEPTH,
-    SearchStrategy,
-    SearchRunResult,
-    run_feature_search,
-    write_summary_json,
-)
-from automatedfe.evaluation.fitness import DEFAULT_RANDOM_STATE
 from automatedfe.data.sorting import DEFAULT_DATASET_OUTPUT
 from automatedfe.data.transaction_materialization import DEFAULT_MMAP_DIR
-
+from automatedfe.evaluation.fitness import DEFAULT_RANDOM_STATE
+from automatedfe.search import (
+    DEFAULT_MAX_DEPTH,
+    SearchAnalysisError,
+    SearchRunResult,
+    SearchStrategy,
+    run_feature_search,
+)
 
 DEFAULT_DATASET = DEFAULT_DATASET_OUTPUT
 DEFAULT_MAPPING = DEFAULT_MAPPING_OUTPUT
@@ -208,8 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=_nonnegative_float,
         default=0.001,
         help=(
-            "Minimum per-fold proxy improvement for history admission "
-            "(default: 0.001)"
+            "Minimum per-fold proxy improvement for history admission (default: 0.001)"
         ),
     )
     parser.add_argument(
@@ -218,10 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="archive_correlation_threshold",
         type=_unit_interval_float,
         default=0.85,
-        help=(
-            "Absolute correlation threshold for history admission "
-            "(default: 0.85)"
-        ),
+        help=("Absolute correlation threshold for history admission (default: 0.85)"),
     )
     parser.add_argument(
         "--active-correlation-threshold",
@@ -229,10 +225,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="active_correlation_threshold",
         type=_unit_interval_float,
         default=0.90,
-        help=(
-            "Absolute correlation threshold against the active set "
-            "(default: 0.90)"
-        ),
+        help=("Absolute correlation threshold against the active set (default: 0.90)"),
     )
     parser.add_argument(
         "--promotion-min-gain",
@@ -251,47 +244,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Minimum mean gain required for active promotion (default: 0.0005)",
     )
     parser.add_argument(
-        "--csv",
-        "--csv-path",
-        "--diagnostics-csv",
-        dest="csv_path",
-        type=Path,
-        help="Optional common candidate diagnostics CSV path",
+        "--feature-labels",
+        choices=("expression", "id"),
+        default="expression",
+        help="Labels used in report figures (default: expression)",
     )
     parser.add_argument(
-        "--archive",
-        "--archive-path",
-        "--evaluated-archive",
-        dest="archive_path",
-        type=Path,
-        help="Optional final Pareto archive JSON path (evaluated strategies only)",
-    )
-    parser.add_argument(
-        "--history",
-        "--history-path",
-        dest="history_path",
-        type=Path,
-        help="Optional complete filtered GP history JSON path (active GP only)",
-    )
-    parser.add_argument(
-        "--active-archive",
-        "--active-archive-path",
-        dest="active_archive_path",
-        type=Path,
-        help="Optional promoted active-set JSON path (active GP only)",
-    )
-    parser.add_argument(
-        "--summary",
-        "--summary-json",
-        "--summary-json-path",
-        dest="summary_path",
-        type=Path,
-        help="Optional atomic run summary JSON path",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Replace existing CSV, archive, or summary outputs",
+        "--tracking-uri",
+        default=None,
+        help="Optional MLflow tracking URI (default: local results/mlflow.db)",
     )
     return parser
 
@@ -305,18 +266,10 @@ def _validate_strategy_options(
         parser.error("--use-active-set is supported only by strategy 'genetic'")
     if args.use_active_set and args.score_metric != "brier_improvement":
         parser.error("--use-active-set requires --score-metric brier_improvement")
-    if not args.use_active_set and (
-        args.history_path is not None or args.active_archive_path is not None
-    ):
-        parser.error(
-            "--history and --active-archive require --use-active-set"
-        )
     evaluated = strategy in _EVALUATED_STRATEGIES
     if evaluated:
         if args.time_budget is None:
-            parser.error(
-                f"--time-budget is required for strategy {strategy.value!r}"
-            )
+            parser.error(f"--time-budget is required for strategy {strategy.value!r}")
         if args.candidate_count is not None:
             parser.error(
                 f"--candidate-count is only valid for strategy "
@@ -332,132 +285,7 @@ def _validate_strategy_options(
                 f"--time-budget is only valid for evaluated strategies "
                 f"({', '.join(item.value for item in _EVALUATED_STRATEGIES)})"
             )
-        if args.archive_path is not None:
-            parser.error(
-                "--archive is not supported for strategy "
-                f"{strategy.value!r}"
-            )
     return strategy
-
-
-def _preflight_outputs(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
-    paths = {
-        "CSV": args.csv_path,
-        "archive": args.archive_path,
-        "history": args.history_path,
-        "active archive": args.active_archive_path,
-        "summary": args.summary_path,
-    }
-    resolved: dict[str, Path] = {}
-    for label, path in paths.items():
-        if path is None:
-            continue
-        resolved_path = path.resolve()
-        if resolved_path.exists() and resolved_path.is_dir():
-            parser.error(f"{label} output path is a directory: {resolved_path}")
-        resolved[label] = resolved_path
-
-    if len(set(resolved.values())) != len(resolved):
-        parser.error(
-            "CSV, archive, history, active archive, and summary outputs "
-            "must be different files"
-        )
-
-    if not args.force:
-        for label, path in resolved.items():
-            if path.exists():
-                parser.error(
-                    f"Refusing to overwrite existing {label} output without "
-                    f"--force: {path}"
-                )
-
-
-def _path_value(path: Path | None) -> str | None:
-    return None if path is None else str(path.resolve())
-
-
-def _summary_document(
-    args: argparse.Namespace,
-    strategy: SearchStrategy,
-    result: SearchRunResult,
-) -> dict[str, object]:
-    document: dict[str, object] = {
-        "strategy": strategy.value,
-        "configuration": {
-            "time_budget_seconds": args.time_budget,
-            "candidate_count": args.candidate_count,
-            "dataset_path": _path_value(args.dataset),
-            "mapping": _path_value(args.mapping),
-            "mmap_dir": _path_value(args.mmap_dir),
-            "feature_cache_dir": _path_value(args.feature_cache_dir),
-            "score_metric": args.score_metric,
-            "fitness_random_state": args.fitness_random_state,
-            "seed": args.seed,
-            "population_size": args.population_size,
-            "max_depth": args.max_depth,
-            "use_active_set": args.use_active_set,
-            "promotion_interval": args.promotion_interval,
-            "first_promotion_top_k": args.first_promotion_top_k,
-            "promotion_add_k": args.promotion_add_k,
-            "promotion_refresh_top_n": args.promotion_refresh_top_n,
-            "archive_quality_threshold": args.archive_quality_threshold,
-            "archive_correlation_threshold": args.archive_correlation_threshold,
-            "active_correlation_threshold": args.active_correlation_threshold,
-            "promotion_min_gain": args.promotion_min_gain,
-            "promotion_mean_gain": args.promotion_mean_gain,
-            "csv_path": _path_value(args.csv_path),
-            "archive_path": _path_value(args.archive_path),
-            "history_path": _path_value(args.history_path),
-            "active_archive_path": _path_value(args.active_archive_path),
-        },
-        "counts": {
-            "generated": result.generated_count,
-            "evaluated": result.evaluated_count,
-            "invalid": result.invalid_count,
-            "duplicates": result.duplicate_count,
-        },
-        "timings": {
-            "search_seconds": result.search_duration_seconds,
-            "final_evaluation_seconds": result.final_evaluation_duration_seconds,
-        },
-        "grammar_exhausted": result.grammar_exhausted,
-        "selected_feature_count": len(result.expressions),
-        "final_metrics": dict(result.final_metrics),
-    }
-    active_set_metrics = getattr(result, "active_set_final_metrics", None)
-    if args.use_active_set:
-        additive_metrics = getattr(result, "additive_metrics", None)
-        history_count = getattr(result, "history_count", 0)
-        active_set_count = getattr(
-            result,
-            "active_set_count",
-            len(getattr(result, "active_set_expressions", ())),
-        )
-        document["counts"]["history"] = history_count
-        document["counts"]["active_set"] = active_set_count
-        document["full_archive_feature_count"] = len(result.expressions)
-        document["full_archive_metrics"] = dict(result.final_metrics)
-        document["history_feature_count"] = history_count
-        document["active_set_feature_count"] = active_set_count
-        document["active_set_final_metrics"] = (
-            None if active_set_metrics is None else dict(active_set_metrics)
-        )
-        document["additive_metrics"] = (
-            None if additive_metrics is None else dict(additive_metrics)
-        )
-        document["timings"]["active_set_final_evaluation_seconds"] = getattr(
-            result,
-            "active_set_final_evaluation_duration_seconds",
-            None,
-        )
-        document["timings"]["additive_evaluation_seconds"] = getattr(
-            result,
-            "additive_evaluation_duration_seconds",
-            None,
-        )
-    if result.objectives is not None:
-        document["objectives"] = [list(objectives) for objectives in result.objectives]
-    return document
 
 
 def _print_result(
@@ -465,6 +293,7 @@ def _print_result(
     strategy: SearchStrategy,
     result: SearchRunResult,
 ) -> None:
+    print(f"Run ID: {result.run_id}")
     print(f"Strategy: {strategy.value}")
     print(
         "Counts: "
@@ -526,15 +355,6 @@ def _print_result(
                 f"rf={active_duration if active_duration is not None else 0.0:.6f}s, "
                 f"additive={additive_duration if additive_duration is not None else 0.0:.6f}s"
             )
-    for label, path in (
-        ("Diagnostics", args.csv_path),
-        ("Archive", args.archive_path),
-        ("History", args.history_path),
-        ("Active archive", args.active_archive_path),
-        ("Summary", args.summary_path),
-    ):
-        if path is not None:
-            print(f"{label}: {path.resolve()}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -543,7 +363,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     strategy = _validate_strategy_options(parser, args)
-    _preflight_outputs(parser, args)
 
     try:
         result = run_feature_search(
@@ -569,20 +388,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             active_correlation_threshold=args.active_correlation_threshold,
             promotion_min_gain=args.promotion_min_gain,
             promotion_mean_gain=args.promotion_mean_gain,
-            csv_path=args.csv_path,
-            archive_path=args.archive_path,
-            history_path=args.history_path,
-            active_archive_path=args.active_archive_path,
-            force=args.force,
+            feature_labels=args.feature_labels,
+            tracking_uri=args.tracking_uri,
         )
-        if args.summary_path is not None:
-            write_summary_json(
-                args.summary_path,
-                _summary_document(args, strategy, result),
-                force=args.force,
-            )
+    except SearchAnalysisError as error:
+        parser._print_message(f"{error}\n")
+        return 1
+    except KeyboardInterrupt:
+        parser._print_message("Feature search interrupted\n")
+        return 130
     except (OSError, TypeError, ValueError) as error:
         parser.error(str(error))
+    except Exception as error:  # noqa: BLE001 - CLI boundary reports all failures
+        parser._print_message(f"Feature search failed: {error}\n")
+        return 1
 
     _print_result(args, strategy, result)
     return 0
@@ -599,4 +418,3 @@ __all__ = [
     "build_parser",
     "main",
 ]
-

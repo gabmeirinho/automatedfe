@@ -1,7 +1,6 @@
-import json
-
 import duckdb
 
+import automatedfe.search.runner as runner_module
 from automatedfe.cli.main import main as dispatch
 
 
@@ -79,14 +78,18 @@ def write_pipeline_fixtures(tmp_path):
     }
 
 
-def test_dispatch_runs_preprocessing_and_bounded_search(tmp_path):
+def test_dispatch_runs_preprocessing_and_tracked_search(
+    tmp_path, monkeypatch, mlflow_store
+):
     paths = write_pipeline_fixtures(tmp_path)
     transformed_dir = tmp_path / "transformed"
     transformed_path = transformed_dir / "transactions.parquet"
     dataset_output_path = transformed_dir / "dataset.parquet"
     mapping_path = transformed_dir / "label_mapping.json"
     mmap_dir = transformed_dir / "mmap"
-    summary_path = tmp_path / "search-summary.json"
+    monkeypatch.setattr(
+        runner_module, "MlflowStore", lambda *_args, **_kwargs: mlflow_store
+    )
 
     assert dispatch(
         [
@@ -125,15 +128,27 @@ def test_dispatch_runs_preprocessing_and_bounded_search(tmp_path):
             str(mapping_path),
             "--mmap-dir",
             str(mmap_dir),
-            "--summary",
-            str(summary_path),
         ]
     ) == 0
 
     assert transformed_path.is_file()
     assert (mmap_dir / "manifest.json").is_file()
-    summary = json.loads(summary_path.read_text())
-    assert summary["strategy"] == "enumerative_without_archive"
-    assert summary["counts"]["generated"] == 1
-    assert summary["counts"]["evaluated"] == 0
-    assert summary["selected_feature_count"] == 1
+    runs = mlflow_store.search_runs(project_states=["complete"])
+    assert len(runs) == 1
+    assert runs[0].data.params["candidate_count"] == "1"
+    artifact_names = {
+        artifact.path
+        for artifact in mlflow_store.client.list_artifacts(runs[0].info.run_id)
+    }
+    assert "manifest.json" in artifact_names
+    assert "report.html" in artifact_names
+    assert "report-artifacts" in artifact_names
+    versions = mlflow_store.client.list_artifacts(
+        runs[0].info.run_id, "report-artifacts"
+    )
+    assert len(versions) == 1
+    figures = mlflow_store.client.list_artifacts(
+        runs[0].info.run_id, f"{versions[0].path}/figures"
+    )
+    assert len(figures) == 11
+    assert all(figure.path.endswith(".png") for figure in figures)

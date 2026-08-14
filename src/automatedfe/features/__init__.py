@@ -126,10 +126,10 @@ _COMPATIBILITY_EXPORTS = {
         for name in (
             "DIAGNOSTIC_COLUMNS",
             "RunnerDiagnosticsRecorder",
+            "SearchAnalysisError",
             "SearchRunResult",
             "SearchStrategy",
             "run_feature_search",
-            "write_summary_json",
         )
     },
     # Lifecycle observation exports.
@@ -246,6 +246,7 @@ __all__ = [
     "RowWindow",
     "RunnerDiagnosticsRecorder",
     "SafeDiv",
+    "SearchAnalysisError",
     "SearchLifecycleRecorder",
     "SearchRunResult",
     "SearchStrategy",
@@ -286,5 +287,4 @@ __all__ = [
     "tree_depth",
     "validate_archive_quality_threshold",
     "validate_correlation_threshold",
-    "write_summary_json",
 ]

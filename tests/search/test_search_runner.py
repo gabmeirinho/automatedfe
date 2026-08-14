@@ -19,13 +19,20 @@ from automatedfe.search.archive import (
     load_archive,
     load_snapshot,
 )
+from automatedfe.search.lifecycle import SearchLifecycleRecorder
 from automatedfe.search.runner import (
     DIAGNOSTIC_COLUMNS,
+    SearchAnalysisError,
+    SearchRunResult,
     SearchStrategy,
-    run_feature_search,
+)
+from automatedfe.search.runner import (
+    _run_feature_search_impl as run_feature_search,
+)
+from automatedfe.search.runner import (
+    run_feature_search as run_tracked_feature_search,
 )
 from automatedfe.search.search import canonical_expression_key
-
 
 LABEL_MAPPING = {
     "status": {"approved": 0, "complete": 1},
@@ -766,3 +773,196 @@ def test_interrupted_lifecycle_csv_remains_readable(tmp_path, monkeypatch):
     assert [row["Expression"] for row in rows] == [str(MeanAmount(0))]
     assert rows[0]["Status"] == "evaluated"
     assert rows[0]["ArchiveMember"] == ""
+
+
+def _tracked_inputs(tmp_path):
+    dataset = tmp_path / "dataset.parquet"
+    dataset.write_bytes(b"tracked dataset")
+    mmap_dir = tmp_path / "mmap"
+    mmap_dir.mkdir()
+    (mmap_dir / "manifest.json").write_text(
+        json.dumps({"rows": 0, "columns": {}}), encoding="utf-8"
+    )
+    return dataset, mmap_dir
+
+
+def _tracked_result(writer, *, generation=True):
+    lifecycle = SearchLifecycleRecorder(strategy="enumerative_without_archive")
+    if generation:
+        lifecycle.generation_rows.append(
+            {
+                "Strategy": "enumerative_without_archive",
+                "Generation": 0,
+                "Generated": 2,
+                "Unique": 2,
+                "Duplicate": 0,
+                "Invalid": 0,
+                "Evaluated": 0,
+                "ArchiveSize": 0,
+                "Added": 0,
+                "Removed": 0,
+                "DurationSeconds": 0.1,
+                "CumulativeRuntimeSeconds": 0.1,
+            }
+        )
+    writer.lifecycle = lifecycle
+    return SearchRunResult(
+        strategy=SearchStrategy.ENUMERATIVE_WITHOUT_ARCHIVE,
+        expressions=(),
+        final_evaluation=SimpleNamespace(metrics={"roc_auc": 0.75}),
+        search_duration_seconds=0.1,
+        final_evaluation_duration_seconds=0.2,
+        generated_count=2,
+        evaluated_count=0,
+        invalid_count=0,
+        duplicate_count=0,
+        objectives=None,
+        grammar_exhausted=False,
+        lifecycle=lifecycle,
+    )
+
+
+def test_public_runner_tracks_analyzes_and_returns_mlflow_id(
+    tmp_path, monkeypatch, mlflow_store
+):
+    dataset, mmap_dir = _tracked_inputs(tmp_path)
+
+    def fake_impl(*_args, **kwargs):
+        return _tracked_result(kwargs["_bundle_writer"])
+
+    def fake_report(run_dir, *, feature_labels):
+        assert feature_labels == "id"
+        report = Path(run_dir) / "report.html"
+        report.write_text("tracked report", encoding="utf-8")
+        return report
+
+    monkeypatch.setattr(runner_module, "_run_feature_search_impl", fake_impl)
+    monkeypatch.setattr(runner_module, "render_run_report", fake_report)
+
+    result = run_tracked_feature_search(
+        "enumerative_without_archive",
+        candidate_count=2,
+        dataset_path=dataset,
+        mapping=LABEL_MAPPING,
+        mmap_dir=mmap_dir,
+        feature_labels="id",
+        tracking_store=mlflow_store,
+    )
+
+    assert result.run_id
+    run = mlflow_store.get_run(result.run_id)
+    assert run.info.status == "FINISHED"
+    assert run.data.tags["project_state"] == "complete"
+    assert run.data.tags["strategy_group"] == "unfiltered_enumeration_benchmark"
+    assert run.data.params["feature_labels"] == "id"
+    assert run.data.metrics["generated"] == 2
+    assert {item.path for item in mlflow_store.client.list_artifacts(result.run_id)} >= {
+        "manifest.json",
+        "report.html",
+    }
+
+
+def test_analysis_failure_preserves_completed_search_bundle(
+    tmp_path, monkeypatch, mlflow_store
+):
+    dataset, mmap_dir = _tracked_inputs(tmp_path)
+    monkeypatch.setattr(
+        runner_module,
+        "_run_feature_search_impl",
+        lambda *_args, **kwargs: _tracked_result(kwargs["_bundle_writer"]),
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "render_run_report",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("plots failed")),
+    )
+
+    with pytest.raises(SearchAnalysisError, match="plots failed") as raised:
+        run_tracked_feature_search(
+            "enumerative_without_archive",
+            candidate_count=2,
+            dataset_path=dataset,
+            mapping=LABEL_MAPPING,
+            mmap_dir=mmap_dir,
+            tracking_store=mlflow_store,
+        )
+
+    run_id = raised.value.run_id
+    run = mlflow_store.get_run(run_id)
+    assert run.info.status == "FAILED"
+    assert run.data.tags["project_state"] == "analysis_failed"
+    bundle = mlflow_store.download_artifact_bundle(run_id, tmp_path / "failed-analysis")
+    assert bundle.state == "search_complete"
+    assert not (bundle.path / "report.html").exists()
+
+
+@pytest.mark.parametrize(
+    ("error", "state", "mlflow_status"),
+    [
+        (RuntimeError("search exploded"), "search_failed", "FAILED"),
+        (KeyboardInterrupt(), "interrupted", "KILLED"),
+    ],
+)
+def test_search_failure_and_interruption_retain_partial_diagnostics(
+    tmp_path, monkeypatch, mlflow_store, error, state, mlflow_status
+):
+    dataset, mmap_dir = _tracked_inputs(tmp_path)
+
+    def fail(*_args, **kwargs):
+        kwargs["_bundle_writer"].lifecycle = SearchLifecycleRecorder(
+            strategy="enumerative_without_archive"
+        )
+        raise error
+
+    monkeypatch.setattr(runner_module, "_run_feature_search_impl", fail)
+    report_called = False
+
+    def report_must_not_run(*_args, **_kwargs):
+        nonlocal report_called
+        report_called = True
+
+    monkeypatch.setattr(runner_module, "render_run_report", report_must_not_run)
+
+    with pytest.raises(type(error)):
+        run_tracked_feature_search(
+            "enumerative_without_archive",
+            candidate_count=2,
+            dataset_path=dataset,
+            mapping=LABEL_MAPPING,
+            mmap_dir=mmap_dir,
+            tracking_store=mlflow_store,
+        )
+
+    run = mlflow_store.search_runs()[0]
+    assert run.info.status == mlflow_status
+    assert run.data.tags["project_state"] == state
+    bundle = mlflow_store.download_artifact_bundle(
+        run.info.run_id, tmp_path / f"partial-{state}"
+    )
+    assert bundle.state == state
+    assert not (bundle.path / "report.html").exists()
+    assert not report_called
+
+
+def test_tracking_preflight_happens_before_input_or_search_construction(
+    tmp_path, monkeypatch
+):
+    built = False
+
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("tracking unavailable")
+
+    def writer_must_not_run(*_args, **_kwargs):
+        nonlocal built
+        built = True
+
+    monkeypatch.setattr(runner_module, "MlflowStore", unavailable)
+    monkeypatch.setattr(runner_module, "RunBundleWriter", writer_must_not_run)
+
+    with pytest.raises(RuntimeError, match="tracking unavailable"):
+        run_tracked_feature_search(
+            "enumerative_without_archive",
+            candidate_count=1,
+            dataset_path=tmp_path / "missing.parquet",
+        )
+    assert not built
