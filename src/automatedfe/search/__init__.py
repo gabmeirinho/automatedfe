@@ -51,6 +51,14 @@ from .enumerative_search import (
     iter_bounded_expressions,
 )
 from .gp import MaterializingGeneticProgramming, build_search_algorithm
+from .lifecycle import (
+    DUPLICATE,
+    EVALUATED,
+    GENERATED,
+    INVALID,
+    MATERIALIZATION_FAILED,
+    SearchLifecycleRecorder,
+)
 from .random_search import build_random_search
 from .search import (
     ARCHIVE_MINIMIZE,
@@ -90,8 +98,13 @@ __all__ = [
     "DEFAULT_PROMOTION_MIN_GAIN",
     "DEFAULT_PROMOTION_REFRESH_TOP_N",
     "DIAGNOSTIC_COLUMNS",
+    "DUPLICATE",
+    "EVALUATED",
     "FORMAT_IDENTIFIER",
     "FORMAT_VERSION",
+    "GENERATED",
+    "INVALID",
+    "MATERIALIZATION_FAILED",
     "OBJECTIVES_PER_ARCHIVE",
     "SNAPSHOT_FORMAT_IDENTIFIER",
     "SNAPSHOT_FORMAT_VERSION",
@@ -110,6 +123,7 @@ __all__ = [
     "MaterializingArchiveSearch",
     "MaterializingGeneticProgramming",
     "RunnerDiagnosticsRecorder",
+    "SearchLifecycleRecorder",
     "SearchRunResult",
     "SearchStrategy",
     "UnboundEnumerativeSearch",

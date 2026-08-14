@@ -4,9 +4,20 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from automatedfe.search.archive import ActiveSetManager, ArchiveStep
+from automatedfe.features.grammar import MeanAmount
+from automatedfe.search.archive import (
+    SNAPSHOT_MAPPING_REFERENCE,
+    ActiveSetManager,
+    ArchiveStep,
+    build_snapshot_document,
+)
+from automatedfe.search.lifecycle import SearchLifecycleRecorder
 from geneticengine.evaluation.sequential import SequentialEvaluator
-from automatedfe.search.search import CandidateEvaluator, MaterializingArchiveSearch
+from automatedfe.search.search import (
+    CandidateEvaluator,
+    MaterializingArchiveSearch,
+    canonical_expression_key,
+)
 from geneticengine.problems import Fitness, MultiObjectiveProblem
 from geneticengine.solutions.individual import ConcreteIndividual
 
@@ -401,6 +412,59 @@ def test_candidate_evaluator_invalidates_fitness_after_baseline_refresh():
     list(evaluator.evaluate(problem, [candidate]))
     assert candidate.metadata["evaluated_baseline_version"] == 1
     assert evaluator.number_of_evaluations() == 2
+
+
+def test_lifecycle_recorder_counts_baseline_refresh_reevaluations():
+    version = {"value": 0}
+    recorder = SearchLifecycleRecorder(strategy="genetic")
+    evaluator = CandidateEvaluator(
+        lambda: version["value"],
+        lifecycle=recorder,
+    )
+    expression = MeanAmount(0)
+    problem = MultiObjectiveProblem(
+        lambda _expression: [0.2, 0.2, 0.2, 1.0],
+        minimize=[False, False, False, True],
+    )
+    candidate = ConcreteIndividual(expression)
+
+    recorder.on_generation_started(0)
+    recorder.on_candidate_generated(candidate)
+    list(evaluator.evaluate(problem, [candidate]))
+    recorder.on_generation_completed(
+        0,
+        build_snapshot_document(
+            [expression],
+            [(0.2, 0.2, 0.2, 1.0)],
+            minimize=(False, False, False, True),
+            mapping_ref=SNAPSHOT_MAPPING_REFERENCE,
+        ),
+    )
+
+    version["value"] = 1
+    recorder.on_generation_started(1)
+    list(evaluator.evaluate(problem, [candidate]))
+    recorder.on_generation_completed(
+        1,
+        build_snapshot_document(
+            [expression],
+            [(0.2, 0.2, 0.2, 1.0)],
+            minimize=(False, False, False, True),
+            mapping_ref=SNAPSHOT_MAPPING_REFERENCE,
+        ),
+    )
+
+    assert len(recorder.candidate_rows) == 1
+    assert recorder.candidate_rows[0]["Status"] == "evaluated"
+    assert recorder.candidate_rows[0]["Generation"] == 0
+    assert [row["Evaluated"] for row in recorder.generation_rows] == [1, 1]
+    assert [row["Unique"] for row in recorder.generation_rows] == [1, 0]
+    assert evaluator.number_of_evaluations() == 2
+
+    recorder.on_search_completed(
+        canonical_expression_key(expression) for expression in (expression,)
+    )
+    assert recorder.candidate_rows[0]["ArchiveMember"] is True
 
 
 def test_promotion_boundary_is_called_once_before_generation_evaluation():

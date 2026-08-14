@@ -895,3 +895,62 @@ def test_snapshot_writes_are_atomic(tmp_path, monkeypatch):
     assert replaced[0][0].endswith(".tmp")
     assert list(tmp_path.glob("*.tmp")) == []
     load_snapshot(snapshot_path, LABEL_MAPPING)
+
+
+def test_archive_snapshot_is_mapping_free_and_round_trips(tmp_path):
+    expressions = [Add(MeanAmount(0), CountTotal(0)), Mul(MaxAmount(1), CountTotal(1))]
+    scores = {
+        str(expressions[0]): (0.8, 0.8, 0.8, 1.0),
+        str(expressions[1]): (0.9, 0.7, 0.9, 1.5),
+    }
+    problem = make_grammar_problem(scores)
+    step = ArchiveStep(mapping=LABEL_MAPPING)
+    run_archive_step(step, problem, grammar_evaluated_individuals(problem, expressions))
+
+    document = step.archive_snapshot()
+    assert "mapping" not in document
+    assert document["mapping_ref"] == SNAPSHOT_MAPPING_REFERENCE
+    assert document["problem"] == {
+        "number_of_objectives": 4,
+        "minimize": [False, False, False, True],
+    }
+
+    snapshot_path = tmp_path / "snapshots" / "generation_000000.json"
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text(json.dumps(document))
+    snapshot = load_snapshot(snapshot_path, LABEL_MAPPING)
+    assert snapshot.version == archive_module.SNAPSHOT_FORMAT_VERSION
+    assert [str(expression) for expression in snapshot.expressions] == [
+        str(expression) for expression in expressions
+    ]
+    assert snapshot.objectives == ((0.8, 0.8, 0.8, 1.0), (0.9, 0.7, 0.9, 1.5))
+    assert snapshot.minimize == (False, False, False, True)
+
+
+def test_archive_snapshot_requires_an_evaluated_population():
+    step = ArchiveStep(mapping=LABEL_MAPPING)
+
+    with pytest.raises(ValueError, match="has not evaluated"):
+        step.archive_snapshot()
+
+
+def test_archive_snapshot_matches_the_latest_auto_saved_front(tmp_path):
+    archive_path = tmp_path / "archive.json"
+    step = ArchiveStep(archive_path=archive_path, mapping=LABEL_MAPPING)
+    winner = Mul(MaxAmount(1), CountTotal(1))
+    scores = {str(winner): (0.9, 0.9, 0.9, 0.5)}
+    problem = make_grammar_problem(scores)
+
+    run_archive_step(step, problem, grammar_evaluated_individuals(problem, [winner]))
+
+    standalone = load_archive(archive_path)
+    document = step.archive_snapshot()
+    assert [str(expression) for expression in standalone.expressions] == [
+        str(expression) for expression in (
+            decode_expression(entry["expression"])
+            for entry in document["expressions"]
+        )
+    ]
+    assert standalone.objectives == tuple(
+        tuple(entry["objectives"]) for entry in document["expressions"]
+    )

@@ -42,6 +42,15 @@ class NumericalFitnessError(ValueError):
     """A numerical failure caused by scoring one generated expression."""
 
 
+class MaterializationError(ValueError):
+    """A failure to materialize one generated expression's event values.
+
+    Materialization failures are candidate-local: the candidate is excluded
+    from evaluation and recorded as ``materialization_failed`` instead of
+    aborting the search or masquerading as a completed evaluation.
+    """
+
+
 def objectives_are_finite(objectives: Sequence[float]) -> bool:
     """Return whether every objective entry is a finite number."""
 
@@ -206,6 +215,11 @@ class ChronologicalFoldEvaluator:
         self.fold_scores: list[float] = []
         self.last_models: list[Any] = []
         self.last_model: Any = None
+        # The materialization duration of the most recent objective_vector
+        # call.  It stays finite for candidates that were materialized, even
+        # when their fold scoring later fails, so invalid-after-materialization
+        # candidates retain their measured duration.
+        self.last_materialization_duration: float | None = None
 
     def _values_for(self, individual: Any) -> np.ndarray:
         return self.materializer.materialize_for_events(
@@ -222,10 +236,20 @@ class ChronologicalFoldEvaluator:
         )
 
     def prepare_population(self, individuals: Sequence[Any]) -> None:
-        """Calculate and cache every feature before population evaluation."""
+        """Calculate and cache every feature before population evaluation.
+
+        A candidate that cannot be materialized raises
+        :class:`MaterializationError` so the search can exclude it from the
+        generation without aborting the run.
+        """
 
         for individual in individuals:
-            self._values_for(individual)
+            try:
+                self._values_for(individual)
+            except (ArithmeticError, KeyError, OSError, TypeError, ValueError) as error:
+                raise MaterializationError(
+                    f"cannot materialize {individual}: {error}"
+                ) from error
 
     def __call__(self, individual: Any) -> float:
         fold_scores = self._score_folds(self._values_for(individual), individual)
@@ -238,18 +262,28 @@ class ChronologicalFoldEvaluator:
         per-fold scores followed by the cached wall-clock materialization
         duration in seconds. The first three objectives maximize and the
         duration minimizes. A vector containing a non-finite entry marks an
-        invalid result that callers must exclude.
+        invalid result that callers must exclude. A candidate that cannot be
+        materialized raises :class:`MaterializationError`, which is
+        candidate-local and distinct from numerical scoring failures.
         """
 
-        values, duration = self._timed_values_for(individual)
+        self.last_materialization_duration = None
+        try:
+            values, duration = self._timed_values_for(individual)
+        except (ArithmeticError, KeyError, OSError, TypeError, ValueError) as error:
+            # Materialization and cache failures are candidate-local: they are
+            # recorded as materialization failures instead of aborting the run.
+            raise MaterializationError(
+                f"cannot materialize {individual}: {error}"
+            ) from error
+        self.last_materialization_duration = float(duration)
         try:
             fold_scores = self._score_folds(values, individual)
         except NumericalFitnessError:
             raise
         except (ArithmeticError, ValueError) as error:
             # Model and metric failures after materialization are candidate-
-            # local numerical failures.  Keep materialization/cache failures
-            # outside this block so they continue to abort the run.
+            # local numerical failures.
             raise NumericalFitnessError(str(error)) from error
         return [*fold_scores, float(duration)]
 
@@ -663,6 +697,7 @@ __all__ = [
     "RandomForestFitness",
     "ActiveResidualEvaluator",
     "ActiveResidualFitness",
+    "MaterializationError",
     "MIN_LOGIT_WEIGHT",
     "NumericalFitnessError",
     "RESIDUAL_EPSILON",

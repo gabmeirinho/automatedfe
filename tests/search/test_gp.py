@@ -11,8 +11,10 @@ from automatedfe.search import (
     ArchiveStep,
     MaterializingGeneticProgramming,
     build_search_algorithm,
+    canonical_expression_key,
     load_archive,
 )
+from automatedfe.search.archive import SNAPSHOT_MAPPING_REFERENCE, load_snapshot
 from geneticengine.algorithms.gp.operators.combinators import ParallelStep, SequenceStep
 from geneticengine.algorithms.gp.operators.selection import LexicaseSelection
 from geneticengine.problems import MultiObjectiveProblem
@@ -415,6 +417,101 @@ def test_archive_loading_types_are_importable_from_public_packages():
     assert RootArchiveStep is ArchiveStep
     assert root_load_archive is load_archive
     assert ArchiveSource
+
+
+def test_gp_search_emits_generation_histories_and_snapshots(tmp_path, archive_dataset):
+    algorithm = build_search_algorithm(
+        EvaluationBudget(20),
+        mapping=LABEL_MAPPING,
+        population_size=10,
+        seed=123,
+        dataset_path=archive_dataset,
+        mmap_dir=write_mmap_fixture(tmp_path / "mmap"),
+    )
+
+    algorithm.search()
+
+    lifecycle = algorithm.lifecycle
+    assert lifecycle.generation_rows
+    assert sorted(lifecycle.snapshots) == [
+        row["Generation"] for row in lifecycle.generation_rows
+    ]
+    assert (
+        sum(row["Evaluated"] for row in lifecycle.generation_rows)
+        == algorithm.tracker.get_number_evaluations()
+    )
+    cumulative_runtime = [
+        row["CumulativeRuntimeSeconds"] for row in lifecycle.generation_rows
+    ]
+    assert cumulative_runtime == sorted(cumulative_runtime)
+    for generation, document in lifecycle.snapshot_documents:
+        assert "mapping" not in document
+        assert document["mapping_ref"] == SNAPSHOT_MAPPING_REFERENCE
+        assert document["problem"]["number_of_objectives"] == 4
+    assert lifecycle.archived_keys == {
+        canonical_expression_key(individual.get_phenotype())
+        for individual in algorithm.archive_step.archive
+    }
+
+    snapshot_path = tmp_path / "snapshots" / "generation_000000.json"
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text(json.dumps(lifecycle.snapshots[0]))
+    snapshot = load_snapshot(snapshot_path, LABEL_MAPPING)
+    assert len(snapshot) == len(lifecycle.snapshots[0]["expressions"])
+
+
+def test_gp_active_search_records_snapshots_without_changing_membership(
+    tmp_path,
+    monkeypatch,
+):
+    class RecordingActiveObjectiveEvaluator:
+        def __init__(self, materializer, dataset_path, **kwargs):
+            pass
+
+        def prepare_population(self, individuals):
+            pass
+
+        def objective_vector(self, individual):
+            return [0.0, 0.0, 0.0, 0.0]
+
+    monkeypatch.setattr(
+        shared_module,
+        "ResidualEvaluator",
+        RecordingActiveObjectiveEvaluator,
+    )
+    monkeypatch.setattr(
+        shared_module,
+        "ActiveResidualEvaluator",
+        RecordingActiveObjectiveEvaluator,
+    )
+
+    def build(mmap_dir):
+        return build_search_algorithm(
+            EvaluationBudget(20),
+            mapping=LABEL_MAPPING,
+            population_size=10,
+            seed=123,
+            use_active_set=True,
+            dataset_path=tmp_path / "dataset.parquet",
+            mmap_dir=write_mmap_fixture(mmap_dir),
+        )
+
+    first = build(tmp_path / "mmap_a")
+    first.search()
+    second = build(tmp_path / "mmap_b")
+    second.search()
+
+    assert first.lifecycle.generation_rows
+    assert second.lifecycle.generation_rows
+    assert len(first.lifecycle.snapshots) == len(first.lifecycle.generation_rows)
+    assert first.lifecycle.archived_keys == second.lifecycle.archived_keys
+    assert first.lifecycle.archived_keys == {
+        canonical_expression_key(individual.get_phenotype())
+        for individual in first.archive_step.archive
+    }
+    assert [
+        row["Evaluated"] for row in first.lifecycle.generation_rows
+    ] == [row["Evaluated"] for row in second.lifecycle.generation_rows]
 
 
 def test_same_seed_produces_same_initial_population_and_results(tmp_path, archive_dataset):

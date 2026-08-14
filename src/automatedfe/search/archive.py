@@ -930,6 +930,34 @@ class ArchiveStep(GeneticStep):
         )
         return _atomic_write_json(save_path, document)
 
+    def archive_snapshot(self) -> dict[str, object]:
+        """Return the current front as a mapping-free structured snapshot.
+
+        Structured run snapshots never embed the label mapping: they reference
+        the single run-level mapping owned by the run manifest via
+        ``mapping_ref``. This document can be reloaded with
+        :func:`load_snapshot` when the run-level mapping is provided.
+        """
+
+        if self._problem is None:
+            raise ValueError(
+                "Cannot snapshot an archive that has not evaluated a population"
+            )
+        return build_snapshot_document(
+            expressions=[
+                individual.get_phenotype() for individual in self.archive
+            ],
+            objectives=[
+                tuple(
+                    float(value)
+                    for value in individual.get_fitness(self._problem).fitness_components
+                )
+                for individual in self.archive
+            ],
+            minimize=self._problem.minimize,
+            mapping_ref=SNAPSHOT_MAPPING_REFERENCE,
+        )
+
     def _resolve_save_path(self, path: str | PathLike[str] | None) -> Path:
         if path is None:
             if self.archive_path is None:
