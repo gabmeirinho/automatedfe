@@ -17,6 +17,9 @@ def test_top_level_parser_lists_unified_commands():
         "encode",
         "materialize",
         "search",
+        "analyze",
+        "report",
+        "tracking-ui",
         "validate",
     ):
         assert command in help_text
@@ -34,6 +37,20 @@ def test_dispatch_routes_to_the_requested_command(monkeypatch):
 
     assert dispatch.main(["sort-dataset", "--sentinel"]) == 7
     assert calls == [["--sentinel"]]
+
+
+def test_dispatch_routes_tracking_operations(monkeypatch):
+    command_module = importlib.import_module("automatedfe.cli.report")
+    calls = []
+
+    monkeypatch.setattr(
+        command_module,
+        "main",
+        lambda argv: calls.append(argv) or 4,
+    )
+
+    assert dispatch.main(["report", "--run-id", "run-1"]) == 4
+    assert calls == [["--run-id", "run-1"]]
 
 
 def test_dispatch_routes_validation_checks(monkeypatch):

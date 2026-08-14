@@ -17,6 +17,7 @@ from .mlflow_store import (
     build_run_name,
     resolve_tracking_uri,
 )
+from .ui import launch_tracking_ui, tracking_ui_command
 
 __all__ = [
     "DEFAULT_ARTIFACT_ROOT",
@@ -34,4 +35,6 @@ __all__ = [
     "TrackingStoreError",
     "build_run_name",
     "resolve_tracking_uri",
+    "launch_tracking_ui",
+    "tracking_ui_command",
 ]

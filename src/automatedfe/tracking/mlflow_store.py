@@ -19,13 +19,15 @@ from datetime import UTC, datetime
 from numbers import Real
 from os import PathLike
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from mlflow.entities import Metric, Param, Run, RunTag, ViewType
 from mlflow.tracking import MlflowClient
 
-from ..analysis.run_bundle import RunBundle, validate_run_bundle
 from ..data.sorting import DEFAULT_RESULTS_DIR
+
+if TYPE_CHECKING:
+    from ..analysis.run_bundle import RunBundle
 
 EXPERIMENT_NAME: Final[str] = "automatedfe"
 DEFAULT_DATABASE_PATH: Final[Path] = DEFAULT_RESULTS_DIR / "mlflow.db"
@@ -381,6 +383,8 @@ class MlflowRunStore:
         flavor metadata is created.
         """
 
+        from ..analysis.run_bundle import validate_run_bundle
+
         staging = Path(staging_directory).expanduser().resolve()
         if not staging.is_dir() or staging.is_symlink():
             raise ValueError(f"bundle staging directory does not exist: {staging}")
@@ -405,6 +409,8 @@ class MlflowRunStore:
         destination: str | PathLike[str],
     ) -> RunBundle:
         """Download a run's artifacts by immutable ID and validate the bundle."""
+
+        from ..analysis.run_bundle import validate_run_bundle
 
         self.get_run(run_id)
         target = Path(destination).expanduser().resolve()
