@@ -579,8 +579,8 @@ def test_load_archive_rejects_wrong_entry_objective_count(tmp_path):
         load_archive(path)
 
 
-def test_load_archive_validates_mapping_compatibility(tmp_path):
-    incompatible_mapping = {
+def test_load_archive_validates_mapping_match(tmp_path):
+    mismatched_mapping = {
         "status": {"approved": 0, "complete": 1, "denied": 2, "others": 3, "extra": 4},
         "capture_method": {"contactless": 0, "emv": 1, "pix": 2},
         "payment_method": {"debit": 0, "credit": 1, "null": -1},
@@ -595,8 +595,8 @@ def test_load_archive_validates_mapping_compatibility(tmp_path):
     archive_path = tmp_path / "archive.json"
     step.save(archive_path)
 
-    with pytest.raises(ValueError, match="incompatible"):
-        load_archive(archive_path, mapping=incompatible_mapping)
+    with pytest.raises(ValueError, match="does not match"):
+        load_archive(archive_path, mapping=mismatched_mapping)
     snapshot = load_archive(archive_path, mapping=LABEL_MAPPING)
     assert len(snapshot) == 1
 
@@ -721,7 +721,7 @@ def test_active_manager_saves_empty_snapshot_with_promotion_state(tmp_path):
     assert snapshot.mapping == LABEL_MAPPING
 
 
-def test_load_active_set_snapshot_validates_mapping_compatibility(tmp_path):
+def test_load_active_set_snapshot_validates_mapping_match(tmp_path):
     expression = Add(MeanAmount(0), CountTotal(0))
     scores = {str(expression): (0.8, 0.8, 0.8, 1.0)}
     signals = {str(expression): np.array([0.0, 1.0, 0.0, 1.0])}
@@ -735,15 +735,15 @@ def test_load_active_set_snapshot_validates_mapping_compatibility(tmp_path):
     active_path = tmp_path / "active.json"
     manager.save_active_snapshot(active_path)
 
-    incompatible_mapping = {
+    mismatched_mapping = {
         "status": {"approved": 0, "complete": 1, "denied": 2, "others": 3, "extra": 4},
         "capture_method": {"contactless": 0, "emv": 1, "pix": 2},
         "payment_method": {"debit": 0, "credit": 1, "null": -1},
         "card_brand": {"mastercard": 0, "visa": 1, "null": -1},
         "document_type": {"cnpj": 0, "cpf": 1, "null": -1},
     }
-    with pytest.raises(ValueError, match="incompatible"):
-        load_active_set_snapshot(active_path, mapping=incompatible_mapping)
+    with pytest.raises(ValueError, match="does not match"):
+        load_active_set_snapshot(active_path, mapping=mismatched_mapping)
     snapshot = load_active_set_snapshot(active_path, mapping=LABEL_MAPPING)
     assert len(snapshot) == 0
 

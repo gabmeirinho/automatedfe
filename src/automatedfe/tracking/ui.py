@@ -7,7 +7,7 @@ import sys
 from collections.abc import Callable, Sequence
 from os import PathLike
 
-from .mlflow_store import MlflowRunStore, MlflowStore
+from .mlflow_store import MlflowRunStore
 
 
 def tracking_ui_command(
@@ -56,7 +56,7 @@ def launch_tracking_ui(
         raise ValueError(
             "tracking_store cannot be combined with tracking_uri or artifact_root"
         )
-    store = tracking_store or MlflowStore(
+    store = tracking_store or MlflowRunStore(
         tracking_uri,
         artifact_root=artifact_root,
     )

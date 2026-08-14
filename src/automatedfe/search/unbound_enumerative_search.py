@@ -38,7 +38,7 @@ class UnboundEnumerativeSearch:
         self.candidate_observers: list[Callable[[expr], None]] = []
 
     @property
-    def grammar_exhausted(self) -> bool:
+    def exhausted(self) -> bool:
         return bool(
             self.enumeration_result is not None
             and self.enumeration_result.exhausted

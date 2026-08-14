@@ -7,14 +7,14 @@ from geneticengine.evaluation.budget import EvaluationBudget
 
 import automatedfe.search.search as shared_module
 from automatedfe.features.grammar import expr
-from automatedfe.search import (
+from automatedfe.search.archive import (
     ArchiveStep,
-    MaterializingGeneticProgramming,
-    build_search_algorithm,
-    canonical_expression_key,
+    SNAPSHOT_MAPPING_REFERENCE,
     load_archive,
+    load_snapshot,
 )
-from automatedfe.search.archive import SNAPSHOT_MAPPING_REFERENCE, load_snapshot
+from automatedfe.search.gp import MaterializingGeneticProgramming, build_search_algorithm
+from automatedfe.search.search import canonical_expression_key
 from geneticengine.algorithms.gp.operators.combinators import ParallelStep, SequenceStep
 from geneticengine.algorithms.gp.operators.selection import LexicaseSelection
 from geneticengine.problems import MultiObjectiveProblem
@@ -407,15 +407,9 @@ def test_archive_path_rejects_an_existing_directory(tmp_path, archive_dataset):
 
 
 def test_archive_loading_types_are_importable_from_public_packages():
-    from automatedfe import ArchiveSnapshot as RootArchiveSnapshot
-    from automatedfe import ArchiveStep as RootArchiveStep
-    from automatedfe import load_archive as root_load_archive
     from automatedfe.evaluation import ArchiveSource
-    from automatedfe.features import ArchiveSnapshot, ArchiveStep
+    from automatedfe.search.archive import ArchiveSnapshot, ArchiveStep, load_archive
 
-    assert RootArchiveSnapshot is ArchiveSnapshot
-    assert RootArchiveStep is ArchiveStep
-    assert root_load_archive is load_archive
     assert ArchiveSource
 
 

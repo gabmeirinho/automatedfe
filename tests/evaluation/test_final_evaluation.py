@@ -227,7 +227,7 @@ def test_final_evaluator_accepts_live_and_loaded_archives_in_stable_order(
 
     evaluator = FinalEvaluator(build_materializer(12), dataset_path)
     materialized = []
-    original = evaluator.materializer.materialize_for_events
+    original = evaluator.materializer.materialize_for_events_with_duration
 
     def recording_materialize(individual, event_merchants, event_timestamps):
         materialized.append(str(individual))
@@ -235,7 +235,7 @@ def test_final_evaluator_accepts_live_and_loaded_archives_in_stable_order(
 
     monkeypatch.setattr(
         evaluator.materializer,
-        "materialize_for_events",
+        "materialize_for_events_with_duration",
         recording_materialize,
     )
     live_result = evaluator.evaluate(live_archive)
@@ -287,7 +287,7 @@ def test_final_evaluator_rejects_empty_archive(tmp_path):
         evaluator.evaluate(archive)
 
 
-def test_final_evaluator_rejects_incompatible_archive_configuration(tmp_path):
+def test_final_evaluator_rejects_mismatched_archive_configuration(tmp_path):
     dataset_path = tmp_path / "dataset.parquet"
     write_train_test_dataset(dataset_path)
     archive = ArchiveSnapshot(
@@ -308,7 +308,7 @@ def test_final_evaluator_validates_loaded_archive_mapping(tmp_path):
     write_train_test_dataset(dataset_path)
     archive_path = tmp_path / "archive.json"
     build_archive([MeanAmount(1)]).save(archive_path)
-    incompatible_mapping = {
+    mismatched_mapping = {
         **LABEL_MAPPING,
         "status": {"approved": 0, "complete": 7},
     }
@@ -316,7 +316,7 @@ def test_final_evaluator_validates_loaded_archive_mapping(tmp_path):
     evaluator = FinalEvaluator(
         build_materializer(12),
         dataset_path,
-        mapping=incompatible_mapping,
+        mapping=mismatched_mapping,
     )
-    with pytest.raises(ValueError, match="label mapping is incompatible"):
+    with pytest.raises(ValueError, match="label mapping does not match"):
         evaluator.evaluate(archive_path)

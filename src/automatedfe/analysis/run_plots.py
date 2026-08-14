@@ -184,8 +184,6 @@ def _archive_changes(ax: plt.Axes, generations: pd.DataFrame) -> None:
     x = generations["Generation"]
     ax.plot(x, generations["ArchiveSize"], marker="o", label="Archive size")
     ax.bar(x, generations["Added"], alpha=0.42, label="Added")
-    ax.bar(x, -generations["Removed"], alpha=0.42, label="Removed")
-    ax.axhline(0, color="#444444", linewidth=0.7)
     _finish(
         ax,
         title=f"Archive membership ({len(generations):,} generations)",
@@ -486,14 +484,11 @@ def render_run_figures(
     run_dir: str | PathLike[str],
     output_dir: str | PathLike[str] | None = None,
     *,
-    search_fold_metric: str | None = None,
     feature_labels: str = "expression",
 ) -> tuple[Path, ...]:
     """Render all eleven PNGs using only a run's persisted artifacts.
 
-    ``feature_labels`` accepts ``"expression"`` or ``"id"``. An explicit
-    ``search_fold_metric`` overrides metadata for old bundles that predate
-    metric persistence.
+    ``feature_labels`` accepts ``"expression"`` or ``"id"``.
     """
 
     if feature_labels not in {"expression", "id"}:
@@ -522,7 +517,6 @@ def render_run_figures(
             "Generation",
             "ArchiveSize",
             "Added",
-            "Removed",
             "Evaluated",
             "CumulativeRuntimeSeconds",
         ),
@@ -532,9 +526,7 @@ def render_run_figures(
     correlations = _numeric(correlations, ("spearman", "training_row_count"))
 
     persisted_metric = evaluation.metrics.get(SEARCH_FOLD_METRIC_KEY)
-    metric = search_fold_metric or (
-        persisted_metric if isinstance(persisted_metric, str) else None
-    )
+    metric = persisted_metric if isinstance(persisted_metric, str) else None
     metric_label = metric_display_name(metric)
     evaluation_free = _is_evaluation_free(candidates)
     label_column = "feature_label" if feature_labels == "expression" else "feature_id"
@@ -571,21 +563,12 @@ def render_run_figures(
     return tuple(paths)
 
 
-render_figures = render_run_figures
-render_run_plots = render_run_figures
-calculate_fold_stability = fold_stability
-calculate_generation_iqr = generation_iqr
-
 __all__ = [
     "FIGURE_DPI",
     "FIGURE_FILENAMES",
     "FIGURES_DIRECTORY",
-    "calculate_fold_stability",
-    "calculate_generation_iqr",
     "fold_stability",
     "generation_iqr",
     "metric_display_name",
-    "render_figures",
     "render_run_figures",
-    "render_run_plots",
 ]

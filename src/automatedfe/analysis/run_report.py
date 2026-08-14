@@ -206,7 +206,7 @@ def _metadata_document(
 def _figure_captions(metric_label: str, correlation_rows: int) -> tuple[str, ...]:
     return (
         "Every persisted candidate outcome, grouped by the generation in which it reached a final state.",
-        "Archive size and the additions and removals derived from adjacent persisted snapshots.",
+        "Archive size and the additions derived from adjacent persisted snapshots.",
         f"Best and median candidate mean {metric_label} by generation. Fold objectives are optimized independently.",
         f"Across-fold stability of {metric_label}; lower spread indicates more consistent fold behavior.",
         "Median and interquartile range of original feature-computation duration. These values are not cache-read latency.",
@@ -608,9 +608,6 @@ def render_run_report(
     return inputs.root / REPORT_FILENAME
 
 
-render_report = render_run_report
-rerender_run_report = render_run_report
-
 __all__ = [
     "FEATURE_LABEL_MODES",
     "REPORT_ASSETS_DIRECTORY",
@@ -618,7 +615,5 @@ __all__ = [
     "REPORT_FORMAT",
     "REPORT_METADATA_FILENAME",
     "REPORT_SCHEMA_VERSION",
-    "render_report",
     "render_run_report",
-    "rerender_run_report",
 ]

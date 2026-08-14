@@ -1,26 +1,11 @@
-"""Window and aggregation catalogs used by the feature kernels.
-
-The canonical feature descriptor is :class:`automatedfe.features.TxFeature`.
-This module keeps only the reusable window value objects and the legacy
-aggregation enum used by the low-level sliding-window API.
-"""
+"""Window catalogs used by the feature kernels."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
-
 AMOUNT_COLUMN = "amount"
 
 MICROSECONDS_PER_HOUR = 3_600_000_000
-
-
-class Aggregation(str, Enum):
-    COUNT = "count"
-    SUM = "sum"
-    MEAN = "mean"
-    MAX = "max"
-    STD = "std"
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,7 +77,6 @@ WINDOW_CATALOG: tuple[Window, ...] = (
 
 __all__ = [
     "AMOUNT_COLUMN",
-    "Aggregation",
     "ROW_WINDOWS",
     "RowWindow",
     "TIME_WINDOWS",

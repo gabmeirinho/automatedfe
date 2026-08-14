@@ -493,6 +493,7 @@ def test_promotion_boundary_is_called_once_before_generation_evaluation():
     fitness = RecordingFitness()
     search = object.__new__(MaterializingArchiveSearch)
     search.archive_step = archive
+    search.active_set_manager = archive
     search.problem = object()
     search.tracker = SimpleNamespace(evaluator=object())
     search.fitness_evaluator = fitness

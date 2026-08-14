@@ -63,7 +63,6 @@ def _persist_plot_tables(run_dir: Path, *, evaluation_free: bool = False) -> Non
             Evaluated=0 if evaluation_free else 3,
             ArchiveSize=0 if evaluation_free else generation + 2,
             Added=0 if evaluation_free else 2,
-            Removed=0 if evaluation_free else generation,
             DurationSeconds=1.5,
             CumulativeRuntimeSeconds=(generation + 1) * 1.5,
         )

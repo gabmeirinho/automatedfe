@@ -1,20 +1,11 @@
-"""Feature-domain APIs and compatibility re-exports.
-
-Feature specifications, grammar nodes, kernels, feature materialization, and
-the in-progress archive/search compatibility surface belong to this
-namespace. Model evaluation is canonical under :mod:`automatedfe.evaluation`.
-"""
-
-from importlib import import_module
+"""Feature specifications, grammar nodes, kernels, and materialization."""
 
 from .feature_materialization import (
     CREATED_AT_COLUMN,
     FEATURE_MMAP_SUFFIX,
     MERCHANT_ID_COLUMN,
     FeatureMaterializer,
-    materialize_aggregation,
     materialize_feature,
-    materialize_individual,
 )
 from .feature_schema import (
     CATEGORY_KINDS,
@@ -34,7 +25,6 @@ from .feature_spec import (
     TIME_WINDOWS,
     TOTAL_HISTORY_WINDOW,
     WINDOW_CATALOG,
-    Aggregation,
     RowWindow,
     TimeWindow,
     TotalHistoryWindow,
@@ -85,115 +75,15 @@ from .kernels import (
     sliding_window,
 )
 
-_COMPATIBILITY_EXPORTS = {
-    # Archive APIs remain available from ``automatedfe.features`` while the
-    # canonical implementation lives under ``automatedfe.search``.
-    **{
-        name: ("automatedfe.search.archive", name)
-        for name in (
-            "ACTIVE_SET_FORMAT_IDENTIFIER",
-            "ACTIVE_SET_FORMAT_VERSION",
-            "ARCHIVE_PROXY_OBJECTIVES",
-            "DEFAULT_ACTIVE_CORRELATION_THRESHOLD",
-            "DEFAULT_ARCHIVE_CORRELATION_THRESHOLD",
-            "DEFAULT_ARCHIVE_QUALITY_THRESHOLD",
-            "DEFAULT_FIRST_PROMOTION_TOP_K",
-            "DEFAULT_PROMOTION_ADD_K",
-            "DEFAULT_PROMOTION_INTERVAL",
-            "DEFAULT_PROMOTION_MEAN_GAIN",
-            "DEFAULT_PROMOTION_MIN_GAIN",
-            "DEFAULT_PROMOTION_REFRESH_TOP_N",
-            "FORMAT_VERSION",
-            "ActiveSetSnapshot",
-            "ArchiveSnapshot",
-            "ArchiveStep",
-            "ActiveSetManager",
-            "GPArchiveStep",
-            "absolute_pearson_correlation",
-            "correlation_rejection",
-            "decode_expression",
-            "encode_expression",
-            "is_correlated_pairwise",
-            "load_active_set_snapshot",
-            "load_archive",
-            "validate_archive_quality_threshold",
-            "validate_correlation_threshold",
-        )
-    },
-    # Runner exports remain available as compatibility aliases.
-    **{
-        name: ("automatedfe.search.runner", name)
-        for name in (
-            "DIAGNOSTIC_COLUMNS",
-            "RunnerDiagnosticsRecorder",
-            "SearchAnalysisError",
-            "SearchRunResult",
-            "SearchStrategy",
-            "run_feature_search",
-        )
-    },
-    # Lifecycle observation exports.
-    "SearchLifecycleRecorder": ("automatedfe.search.lifecycle", "SearchLifecycleRecorder"),
-    # Search strategy exports are compatibility aliases for the canonical
-    # ``automatedfe.search`` package.
-    **{
-        name: ("automatedfe.search", name)
-        for name in (
-            "DEFAULT_MAX_DEPTH",
-            "BoundedExpressionEnumerator",
-            "BoundedGrammarEnumerator",
-            "EnumerationResult",
-            "MaterializingArchiveSearch",
-            "MaterializingGeneticProgramming",
-            "UnboundEnumerativeSearch",
-            "build_enumerative_search",
-            "build_random_search",
-            "build_search_algorithm",
-            "build_unbound_enumerative_search",
-            "canonical_expression_key",
-            "collect_evaluation_free_expressions",
-            "collect_unique_expressions",
-            "iter_bounded_expressions",
-        )
-    },
-}
-
-
-def __getattr__(name: str):
-    """Resolve moved archive/search APIs without importing search eagerly."""
-
-    target = _COMPATIBILITY_EXPORTS.get(name)
-    if target is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module_name, attribute_name = target
-    value = getattr(import_module(module_name), attribute_name)
-    globals()[name] = value
-    return value
-
 __all__ = [
-    "ACTIVE_SET_FORMAT_IDENTIFIER",
-    "ACTIVE_SET_FORMAT_VERSION",
     "AMOUNT_COLUMN",
-    "ARCHIVE_PROXY_OBJECTIVES",
-    "DEFAULT_ACTIVE_CORRELATION_THRESHOLD",
     "CATEGORY_KINDS",
     "COUNT",
     "CREATED_AT_COLUMN",
     "DAILY_KINDS",
     "DAY_MICROSECONDS",
-    "DEFAULT_ARCHIVE_CORRELATION_THRESHOLD",
-    "DEFAULT_ARCHIVE_QUALITY_THRESHOLD",
-    "DEFAULT_FIRST_PROMOTION_TOP_K",
-    "DEFAULT_PROMOTION_ADD_K",
-    "DEFAULT_PROMOTION_INTERVAL",
-    "DEFAULT_PROMOTION_MEAN_GAIN",
-    "DEFAULT_PROMOTION_MIN_GAIN",
-    "DEFAULT_PROMOTION_REFRESH_TOP_N",
-    "DEFAULT_MAX_DEPTH",
-    "DIAGNOSTIC_COLUMNS",
     "FAMILIES",
     "FEATURE_MMAP_SUFFIX",
-    "FORMAT_VERSION",
     "MAX",
     "MEAN",
     "MERCHANT_ID_COLUMN",
@@ -214,77 +104,40 @@ __all__ = [
     "WINDOW_CATALOG",
     "Add",
     "Agg",
-    "Aggregation",
     "AmountAgg",
-    "ArchiveSnapshot",
-    "ArchiveStep",
-    "ActiveSetManager",
-    "ActiveSetSnapshot",
     "ArithmeticOp",
     "AvgDailyAmount",
     "AvgDailyAmountCategory",
     "AvgDailyCount",
     "AvgDailyCountCategory",
     "AvgDailyTotalAmount",
-    "BoundedExpressionEnumerator",
-    "BoundedGrammarEnumerator",
     "CategoryRate",
     "CountAgg",
     "CountCategory",
     "CountTotal",
     "DailyAgg",
-    "EnumerationResult",
     "FeatureMaterializer",
-    "GPArchiveStep",
     "Log",
-    "MaterializingArchiveSearch",
-    "MaterializingGeneticProgramming",
     "MaxAmount",
     "MeanAmount",
     "Mul",
     "RateAgg",
     "RowWindow",
-    "RunnerDiagnosticsRecorder",
     "SafeDiv",
-    "SearchAnalysisError",
-    "SearchLifecycleRecorder",
-    "SearchRunResult",
-    "SearchStrategy",
     "StdAmount",
     "Sub",
     "TimeWindow",
     "TotalAmount",
     "TotalHistoryWindow",
     "TxFeature",
-    "UnboundEnumerativeSearch",
     "Window",
-    "absolute_pearson_correlation",
     "aggregate",
-    "build_enumerative_search",
     "build_grammar",
-    "build_random_search",
-    "build_search_algorithm",
-    "build_unbound_enumerative_search",
-    "canonical_expression_key",
     "code_lists_from_mapping",
-    "collect_evaluation_free_expressions",
     "collect_features",
-    "collect_unique_expressions",
-    "correlation_rejection",
     "count_nodes",
-    "decode_expression",
-    "encode_expression",
     "expr",
-    "is_correlated_pairwise",
-    "iter_bounded_expressions",
-    "load_active_set_snapshot",
-    "load_archive",
-    "materialize_aggregation",
     "materialize_feature",
-    "materialize_individual",
-    "run_feature_search",
     "sliding_window",
     "tree_depth",
-    "validate_archive_quality_threshold",
-    "validate_correlation_threshold",
 ]

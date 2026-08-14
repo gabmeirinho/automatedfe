@@ -52,12 +52,6 @@ class BoundedExpressionEnumerator(Iterator[expr]):
         return self._exhausted
 
     @property
-    def grammar_exhausted(self) -> bool:
-        """Alias used by runner diagnostics for the exhaustion state."""
-
-        return self.exhausted
-
-    @property
     def seen_keys(self) -> frozenset[str]:
         """Return structural identities emitted by this run so far."""
 
@@ -99,10 +93,6 @@ class EnumerationResult:
 
     def __len__(self) -> int:
         return len(self.expressions)
-
-    @property
-    def grammar_exhausted(self) -> bool:
-        return self.exhausted
 
     def __iter__(self) -> Iterator[expr]:
         return iter(self.expressions)
@@ -209,18 +199,12 @@ def build_enumerative_search(
     )
 
 
-BoundedGrammarEnumerator = BoundedExpressionEnumerator
-collect_evaluation_free_expressions = collect_unique_expressions
-
-
 __all__ = [
     "DEFAULT_MAX_DEPTH",
     "BoundedExpressionEnumerator",
-    "BoundedGrammarEnumerator",
     "EnumerationResult",
     "build_enumerative_search",
     "canonical_expression_key",
-    "collect_evaluation_free_expressions",
     "collect_unique_expressions",
     "iter_bounded_expressions",
 ]

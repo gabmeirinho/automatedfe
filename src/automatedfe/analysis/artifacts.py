@@ -81,7 +81,6 @@ GENERATIONS_COLUMNS: Final[tuple[str, ...]] = (
     "Evaluated",
     "ArchiveSize",
     "Added",
-    "Removed",
     "DurationSeconds",
     "CumulativeRuntimeSeconds",
 )

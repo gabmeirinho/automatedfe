@@ -8,8 +8,8 @@ bundles consume without reconstructing search history afterward:
   ``materialization_failed``, ``invalid``, or ``evaluated``);
 * one generation row per processed generation with consistent counts and
   monotonic cumulative runtime; and
-* one mapping-free archive snapshot per processed generation, with
-  additions/removals derived from adjacent snapshots.
+* one mapping-free archive snapshot per processed generation, with additions
+  derived from adjacent snapshots.
 
 Observation never changes the search: candidates are recorded by structural
 identity, duplicate candidates are counted and rowed but never evaluated
@@ -219,14 +219,12 @@ class SearchLifecycleRecorder:
         """Retain the generation's archive snapshot and summary row.
 
         *snapshot* must be a mapping-free structured snapshot document; the
-        additions/removals of the summary row are derived from the adjacent
-        snapshot documents.
+        additions of the summary row are derived from adjacent snapshots.
         """
 
         self.snapshots[generation] = dict(snapshot)
         current_keys = self._snapshot_keys(snapshot)
         added = len(current_keys - self._previous_archive_keys)
-        removed = len(self._previous_archive_keys - current_keys)
         self._previous_archive_keys = current_keys
         now = monotonic_ns()
         counts = self._generation_counts
@@ -240,7 +238,6 @@ class SearchLifecycleRecorder:
             "Evaluated": counts["evaluated"],
             "ArchiveSize": len(current_keys),
             "Added": added,
-            "Removed": removed,
             "DurationSeconds": self._elapsed(self._generation_started_ns, now),
             "CumulativeRuntimeSeconds": self._elapsed(self._search_started_ns, now),
         }

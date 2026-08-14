@@ -158,7 +158,6 @@ def _run_bundle(
             Evaluated=1,
             ArchiveSize=generation + 1,
             Added=1,
-            Removed=0,
             DurationSeconds=1.2,
             CumulativeRuntimeSeconds=(generation + 1) * 1.2,
         )

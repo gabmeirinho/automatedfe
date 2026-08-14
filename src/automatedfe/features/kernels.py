@@ -25,7 +25,7 @@ import math
 import numba
 import numpy as np
 
-from .feature_spec import Aggregation, RowWindow, TimeWindow, TotalHistoryWindow, Window
+from .feature_spec import RowWindow, TimeWindow, TotalHistoryWindow, Window
 
 COUNT = 0
 SUM = 1
@@ -374,9 +374,7 @@ def _max_total_kernel(
         )
 
 
-def _resolve_aggregation(aggregation: str | Aggregation) -> int:
-    if isinstance(aggregation, Aggregation):
-        aggregation = aggregation.value
+def _resolve_aggregation(aggregation: str) -> int:
     try:
         return _AGGREGATIONS[aggregation]
     except KeyError:
@@ -431,15 +429,15 @@ def sliding_window(
     merchant_id: np.ndarray,
     values: np.ndarray | None,
     timestamps: np.ndarray | None,
-    aggregation: str | Aggregation = Aggregation.COUNT,
+    aggregation: str = "count",
     window_mode: str = "rows",
     window_span: int = 0,
 ) -> np.ndarray:
     """Compute a sliding-window aggregation for every row.
 
     ``aggregation`` is one of ``"count"``, ``"sum"``, ``"mean"``, or
-    ``"max"`` (or an :class:`~automatedfe.features.Aggregation`). ``count``
-    ignores *values*; the rest require it. *timestamps* (int64 microseconds)
+    ``"max"``. ``count`` ignores *values*; the rest require it. *timestamps*
+    (int64 microseconds)
     is only required for ``window_mode="time"``. *window_span* is a row count
     for ``"rows"`` and a microsecond span for ``"time"``; it is ignored for
     ``"total"``.
@@ -510,15 +508,15 @@ def aggregate(
     merchant_id: np.ndarray,
     values: np.ndarray | None,
     timestamps: np.ndarray | None,
-    aggregation: Aggregation,
+    aggregation: str,
     window: Window,
 ) -> np.ndarray:
     """Compute *aggregation* over *window* for every transaction row.
 
     Convenience wrapper around :func:`sliding_window` accepting the
     window and aggregation value objects used by :class:`TxFeature`.
-    ``Aggregation.COUNT`` ignores *values*; the other aggregations require the
-    ``"amount"`` column in *values*. *timestamps* is only used for
+    ``"count"`` ignores *values*; the other aggregations require the ``"amount"``
+    column in *values*. *timestamps* is only used for
     :class:`~automatedfe.features.TimeWindow` windows.
     """
 

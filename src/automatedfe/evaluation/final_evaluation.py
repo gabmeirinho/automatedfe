@@ -8,7 +8,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from os import PathLike
 from pathlib import Path
-from time import monotonic
 from typing import Any
 
 import duckdb
@@ -110,7 +109,7 @@ def _validate_archive_snapshot(
         raise ValueError("Archive is empty; at least one expression is required")
     if snapshot.minimize != ARCHIVE_MINIMIZE:
         raise ValueError(
-            "Archive objective directions are incompatible with final evaluation; "
+            "Archive objective directions do not match final evaluation; "
             f"expected {list(ARCHIVE_MINIMIZE)}, got {list(snapshot.minimize)}"
         )
     if len(snapshot.objectives) != len(snapshot.expressions):
@@ -119,9 +118,9 @@ def _validate_archive_snapshot(
     if mapping is not None:
         # ``load_archive`` performs this check for paths. A snapshot may have
         # been loaded without a mapping, so apply the same validation here.
-        from ..search.archive import _resolve_mapping, _validate_mapping_compatible
+        from ..search.archive import _resolve_mapping, _validate_mapping_matches
 
-        _validate_mapping_compatible(snapshot.mapping, _resolve_mapping(mapping))
+        _validate_mapping_matches(snapshot.mapping, _resolve_mapping(mapping))
 
 
 def _resolve_archive(
@@ -137,7 +136,7 @@ def _resolve_archive(
         problem = source._problem
         if problem is not None and tuple(problem.minimize) != ARCHIVE_MINIMIZE:
             raise ValueError(
-                "Archive objective directions are incompatible with final evaluation; "
+                "Archive objective directions do not match final evaluation; "
                 f"expected {list(ARCHIVE_MINIMIZE)}, got {list(problem.minimize)}"
             )
         return [_as_expression(individual) for individual in source.archive]
@@ -183,12 +182,6 @@ class FinalEvaluationDiagnostics:
         return float(np.sum(self.materialization_seconds))
 
     @property
-    def per_tree_importances(self) -> np.ndarray:
-        """Descriptive alias for the retained per-tree impurity matrix."""
-
-        return self.tree_importances
-
-    @property
     def feature_importances(self) -> np.ndarray:
         """Mean impurity importance for each final feature."""
 
@@ -199,19 +192,6 @@ class FinalEvaluationDiagnostics:
         """Across-tree standard deviation of impurity importance."""
 
         return self.importance_stds
-
-    @property
-    def correlations(self) -> np.ndarray:
-        return self.spearman_correlations
-
-    @property
-    def training_row_count(self) -> int:
-        return self.correlation_training_row_count
-
-    @property
-    def materialization_durations(self) -> np.ndarray:
-        return self.materialization_seconds
-
 
 @dataclass(frozen=True, slots=True)
 class FinalEvaluationResult:
@@ -283,12 +263,6 @@ class AdditiveEvaluationResult:
     expressions: tuple[Any, ...]
 
     @property
-    def predictions(self) -> np.ndarray:
-        """Return the test probabilities under the RF-compatible name."""
-
-        return self.test_predictions
-
-    @property
     def train_auc(self) -> float:
         """Return the additive ensemble's training ROC AUC."""
 
@@ -300,26 +274,14 @@ class AdditiveEvaluationResult:
 
         return self.metrics["test_auc"]
 
-    @property
-    def train_roc_auc(self) -> float:
-        """Descriptive alias for :attr:`train_auc`."""
-
-        return self.train_auc
-
-    @property
-    def test_roc_auc(self) -> float:
-        """Descriptive alias for :attr:`test_auc`."""
-
-        return self.test_auc
-
 
 class FinalEvaluator:
     """Materialize a generated feature set and score it on the test split.
 
     The complete feature matrix is computed over the union of training and
     test events, then a random forest is fitted on the training rows and
-    scored on the held-out test rows. ``evaluate`` accepts the historical
-    sequence of expressions, a live :class:`ArchiveStep`, an
+    scored on the held-out test rows. ``evaluate`` accepts an expression
+    sequence, a live :class:`ArchiveStep`, an
     :class:`ArchiveSnapshot`, or a path to an archive JSON file.
     """
 
@@ -392,34 +354,15 @@ class FinalEvaluator:
         """Materialize one feature on all evaluation events once.
 
         The materializer retains the original computation duration for event
-        features, including durations restored from its durable cache.  The
-        fallback clock is for compatible custom materializers that implement
-        only the historical ``materialize_for_events`` method.
+        features, including durations restored from its durable cache.
         """
 
-        started = monotonic()
-        values = np.asarray(
-            self.materializer.materialize_for_events(
-                individual,
-                self.event_merchants,
-                self.event_timestamps,
-            ),
-            dtype=np.float64,
+        values, duration = self.materializer.materialize_for_events_with_duration(
+            individual,
+            self.event_merchants,
+            self.event_timestamps,
         )
-        duration = None
-        get_duration = getattr(
-            self.materializer,
-            "event_materialization_duration",
-            None,
-        )
-        if callable(get_duration):
-            duration = get_duration(
-                individual,
-                self.event_merchants,
-                self.event_timestamps,
-            )
-        if duration is None:
-            duration = monotonic() - started
+        values = np.asarray(values, dtype=np.float64)
         duration = float(duration)
         if not math.isfinite(duration) or duration < 0:
             raise ValueError("Feature materialization duration must be finite and non-negative")
@@ -647,8 +590,7 @@ class FinalEvaluator:
         Active expressions are already filtered during promotion. This method
         deliberately performs no additional correlation filtering and treats
         an empty active set as a valid, metric-less result. The positional
-        ``evaluate`` method retains its historical error for an empty full
-        archive.
+        ``evaluate`` rejects an empty full archive.
         """
 
         if individuals is not None and archive is not None:
@@ -663,11 +605,6 @@ class FinalEvaluator:
         if not resolved:
             return None
         return self.evaluate(resolved)
-
-    # Keep both spellings available to callers describing this as an active
-    # RF evaluation rather than an active-set evaluation.
-    evaluate_active_rf = evaluate_active_set
-    evaluate_active = evaluate_active_set
 
     def evaluate_additive_ensemble(
         self,
@@ -741,18 +678,6 @@ class FinalEvaluator:
             models=tuple(models),
             expressions=tuple(expressions),
         )
-
-    # Short aliases make the additive path easy to discover without changing
-    # the existing ``evaluate``/``evaluate_archive`` API.
-    evaluate_active_additive = evaluate_additive_ensemble
-    evaluate_additive = evaluate_additive_ensemble
-
-    __call__ = evaluate
-
-    def evaluate_archive(self, archive: ArchiveSource) -> FinalEvaluationResult:
-        """Evaluate every expression in a live or persisted archive."""
-
-        return self.evaluate(archive)
 
 
 __all__ = [
