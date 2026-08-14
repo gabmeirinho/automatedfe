@@ -55,6 +55,21 @@ from .artifacts import (
     write_run_manifest,
     write_status,
 )
+from .run_bundle import (
+    PARTIAL_DIRECTORY,
+    RUN_BUNDLE_FORMAT,
+    RUN_BUNDLE_SCHEMA_VERSION,
+    RunBundle,
+    RunBundleError,
+    RunBundleValidationError,
+    RunBundleWriter,
+    create_run_bundle,
+    finalize_run_bundle,
+    load_run_bundle,
+    open_run_bundle,
+    validate_run_bundle,
+    write_run_bundle,
+)
 
 __all__ = [
     "ARCHIVE_SNAPSHOTS_DIRECTORY",
@@ -99,4 +114,17 @@ __all__ = [
     "write_generations_csv",
     "write_run_manifest",
     "write_status",
+    "PARTIAL_DIRECTORY",
+    "RUN_BUNDLE_FORMAT",
+    "RUN_BUNDLE_SCHEMA_VERSION",
+    "RunBundle",
+    "RunBundleError",
+    "RunBundleValidationError",
+    "RunBundleWriter",
+    "create_run_bundle",
+    "finalize_run_bundle",
+    "load_run_bundle",
+    "open_run_bundle",
+    "validate_run_bundle",
+    "write_run_bundle",
 ]

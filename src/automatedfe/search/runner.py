@@ -12,9 +12,10 @@ import contextlib
 import json
 import math
 import os
+import shutil
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from numbers import Integral, Real
 from os import PathLike
@@ -24,7 +25,8 @@ from typing import Any
 
 from geneticengine.evaluation.budget import TimeBudget
 
-from ..analysis.artifacts import CANDIDATES_COLUMNS
+from ..analysis.artifacts import CANDIDATES_COLUMNS, CANDIDATES_FILENAME
+from ..analysis.run_bundle import RunBundleWriter
 from ..data.transaction_materialization import DEFAULT_MMAP_DIR
 from ..evaluation.final_evaluation import (
     AdditiveEvaluationResult,
@@ -160,6 +162,7 @@ class SearchRunResult:
     history_count: int = 0
     active_set_count: int = 0
     lifecycle: SearchLifecycleRecorder | None = None
+    bundle_path: Path | None = None
 
     @property
     def final_metrics(self) -> dict[str, float]:
@@ -458,7 +461,7 @@ def _empty_archive_error(
     )
 
 
-def run_feature_search(
+def _run_feature_search_impl(
     strategy: SearchStrategy | str,
     *,
     time_budget_seconds: float | None = None,
@@ -488,6 +491,7 @@ def run_feature_search(
     history_path: str | PathLike[str] | None = None,
     active_archive_path: str | PathLike[str] | None = None,
     force: bool = False,
+    _bundle_writer: RunBundleWriter | None = None,
 ) -> SearchRunResult:
     """Run one strategy and always evaluate its selected features on test data.
 
@@ -606,9 +610,13 @@ def run_feature_search(
         lifecycle = SearchLifecycleRecorder(
             strategy=selected_strategy.value,
             candidate_csv_path=(
-                str(resolved_csv_path) if resolved_csv_path is not None else None
+                str(_bundle_writer.staged_candidates_path)
+                if _bundle_writer is not None
+                else (str(resolved_csv_path) if resolved_csv_path is not None else None)
             ),
         )
+        if _bundle_writer is not None:
+            _bundle_writer.lifecycle = lifecycle
         if selected_strategy in _EVALUATED_STRATEGIES:
             search.lifecycle = lifecycle
         else:
@@ -718,7 +726,7 @@ def run_feature_search(
         active_count_source = getattr(search, "archive_step", None)
     history_count = len(getattr(active_count_source, "history_individuals", ()))
 
-    return SearchRunResult(
+    result = SearchRunResult(
         strategy=selected_strategy,
         expressions=expressions,
         final_evaluation=final_evaluation,
@@ -741,6 +749,205 @@ def run_feature_search(
         active_set_count=len(active_set_expressions),
         lifecycle=lifecycle,
     )
+    if lifecycle is not None:
+        lifecycle.close()
+    return result
+
+
+def _select_bundle_destination(
+    run_dir: str | PathLike[str] | None,
+    bundle_path: str | PathLike[str] | None,
+    run_bundle_path: str | PathLike[str] | None,
+) -> Path | None:
+    supplied = [
+        Path(value).resolve()
+        for value in (run_dir, bundle_path, run_bundle_path)
+        if value is not None
+    ]
+    if not supplied:
+        return None
+    if len(set(supplied)) != 1:
+        raise ValueError(
+            "run_dir, bundle_path, and run_bundle_path must identify the same bundle"
+        )
+    return supplied[0]
+
+
+def _copy_bundle_candidates(bundle_path: Path, csv_path: Path | None) -> None:
+    """Preserve the legacy loose CSV when structured output is requested."""
+
+    if csv_path is None:
+        return
+    source = bundle_path / CANDIDATES_FILENAME
+    if not source.is_file():
+        return
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, csv_path)
+
+
+def run_feature_search(
+    strategy: SearchStrategy | str,
+    *,
+    time_budget_seconds: float | None = None,
+    candidate_count: int | None = None,
+    dataset_path: str | PathLike[str],
+    mapping: Mapping[str, Mapping[str, int]] | str | PathLike[str] | None = None,
+    mmap_dir: str | PathLike[str] = DEFAULT_MMAP_DIR,
+    feature_cache_dir: str | PathLike[str] | None = None,
+    n_splits: int = DEFAULT_N_SPLITS,
+    score_metric: str = "brier_improvement",
+    fitness_random_state: int = DEFAULT_RANDOM_STATE,
+    seed: int = 42,
+    population_size: int = 50,
+    max_depth: int | None = None,
+    use_active_set: bool = False,
+    promotion_interval: int = 5,
+    first_promotion_top_k: int = 2,
+    promotion_add_k: int = 1,
+    promotion_refresh_top_n: int = 50,
+    archive_quality_threshold: float = 0.001,
+    archive_correlation_threshold: float = 0.85,
+    active_correlation_threshold: float = 0.90,
+    promotion_min_gain: float = 0.0,
+    promotion_mean_gain: float = 0.0005,
+    csv_path: str | PathLike[str] | None = None,
+    archive_path: str | PathLike[str] | None = None,
+    history_path: str | PathLike[str] | None = None,
+    active_archive_path: str | PathLike[str] | None = None,
+    force: bool = False,
+    run_dir: str | PathLike[str] | None = None,
+    bundle_path: str | PathLike[str] | None = None,
+    run_bundle_path: str | PathLike[str] | None = None,
+    run_id: str | None = None,
+) -> SearchRunResult:
+    """Run one strategy, optionally publishing a validated structured bundle.
+
+    The bundle arguments are opt-in during Phase 1. Without one of them this
+    function retains the existing loose-output behavior. With one supplied,
+    candidate evidence is staged with the bundle and failures are published
+    under its sibling ``partial/`` directory.
+    """
+
+    destination = _select_bundle_destination(run_dir, bundle_path, run_bundle_path)
+    if destination is None:
+        return _run_feature_search_impl(
+            strategy,
+            time_budget_seconds=time_budget_seconds,
+            candidate_count=candidate_count,
+            dataset_path=dataset_path,
+            mapping=mapping,
+            mmap_dir=mmap_dir,
+            feature_cache_dir=feature_cache_dir,
+            n_splits=n_splits,
+            score_metric=score_metric,
+            fitness_random_state=fitness_random_state,
+            seed=seed,
+            population_size=population_size,
+            max_depth=max_depth,
+            use_active_set=use_active_set,
+            promotion_interval=promotion_interval,
+            first_promotion_top_k=first_promotion_top_k,
+            promotion_add_k=promotion_add_k,
+            promotion_refresh_top_n=promotion_refresh_top_n,
+            archive_quality_threshold=archive_quality_threshold,
+            archive_correlation_threshold=archive_correlation_threshold,
+            active_correlation_threshold=active_correlation_threshold,
+            promotion_min_gain=promotion_min_gain,
+            promotion_mean_gain=promotion_mean_gain,
+            csv_path=csv_path,
+            archive_path=archive_path,
+            history_path=history_path,
+            active_archive_path=active_archive_path,
+            force=force,
+        )
+
+    selected_strategy = _coerce_strategy(strategy)
+    if not isinstance(use_active_set, bool):
+        raise ValueError("use_active_set must be a boolean")
+    if use_active_set and selected_strategy is not SearchStrategy.GENETIC:
+        raise ValueError("use_active_set is supported only by the genetic strategy")
+    if use_active_set and score_metric != "brier_improvement":
+        raise ValueError("use_active_set requires score_metric='brier_improvement'")
+    _validate_budget_contract(
+        selected_strategy,
+        time_budget_seconds=time_budget_seconds,
+        candidate_count=candidate_count,
+    )
+    _preflight_output_paths(
+        selected_strategy,
+        csv_path=csv_path,
+        archive_path=archive_path,
+        history_path=history_path,
+        active_archive_path=active_archive_path,
+        use_active_set=use_active_set,
+        force=force,
+    )
+    writer = RunBundleWriter(
+        destination,
+        run_id=run_id,
+        strategy=selected_strategy.value,
+        dataset_path=dataset_path,
+        mapping=mapping,
+        mmap_dir=mmap_dir,
+        force=force,
+    )
+    try:
+        result = _run_feature_search_impl(
+            selected_strategy,
+            time_budget_seconds=time_budget_seconds,
+            candidate_count=candidate_count,
+            dataset_path=dataset_path,
+            mapping=mapping,
+            mmap_dir=mmap_dir,
+            feature_cache_dir=feature_cache_dir,
+            n_splits=n_splits,
+            score_metric=score_metric,
+            fitness_random_state=fitness_random_state,
+            seed=seed,
+            population_size=population_size,
+            max_depth=max_depth,
+            use_active_set=use_active_set,
+            promotion_interval=promotion_interval,
+            first_promotion_top_k=first_promotion_top_k,
+            promotion_add_k=promotion_add_k,
+            promotion_refresh_top_n=promotion_refresh_top_n,
+            archive_quality_threshold=archive_quality_threshold,
+            archive_correlation_threshold=archive_correlation_threshold,
+            active_correlation_threshold=active_correlation_threshold,
+            promotion_min_gain=promotion_min_gain,
+            promotion_mean_gain=promotion_mean_gain,
+            # The lifecycle writes into staging. The legacy CSV is copied
+            # after publication so an interrupted run remains readable too.
+            csv_path=csv_path,
+            archive_path=archive_path,
+            history_path=history_path,
+            active_archive_path=active_archive_path,
+            force=force,
+            _bundle_writer=writer,
+        )
+    except BaseException as error:
+        lifecycle = writer.lifecycle
+        if lifecycle is not None:
+            lifecycle.close()
+        try:
+            partial = writer.finalize(
+                "interrupted" if isinstance(error, KeyboardInterrupt) else "search_failed",
+                lifecycle=lifecycle,
+                error=error,
+            )
+            _copy_bundle_candidates(partial.path, Path(csv_path).resolve() if csv_path else None)
+        except BaseException:
+            # Preserve the original search exception. The writer has already
+            # made a best-effort cleanup if partial publication failed.
+            writer.cleanup()
+        raise
+
+    lifecycle = result.lifecycle
+    if lifecycle is not None:
+        lifecycle.close()
+    completed = writer.finalize("search_complete", lifecycle=lifecycle)
+    _copy_bundle_candidates(completed.path, Path(csv_path).resolve() if csv_path else None)
+    return replace(result, bundle_path=completed.path)
 
 
 __all__ = [
