@@ -67,6 +67,7 @@ FINAL_TIMING_COLUMNS: Final[tuple[str, ...]] = TIMING_COLUMNS
 
 EVALUATION_FORMAT: Final[str] = "automatedfe-final-evaluation"
 EVALUATION_SCHEMA_VERSION: Final[int] = 1
+SEARCH_FOLD_METRIC_KEY: Final[str] = "search_fold_metric"
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,8 +108,7 @@ def _csv_text(
     for row in rows:
         if not isinstance(row, Mapping) or set(row) != set(columns):
             raise ValueError(
-                "Evaluation table rows must contain exactly: "
-                + ", ".join(columns)
+                "Evaluation table rows must contain exactly: " + ", ".join(columns)
             )
     from io import StringIO
 
@@ -124,9 +124,7 @@ def _read_csv(path: Path, columns: tuple[str, ...]) -> tuple[dict[str, str], ...
         with path.open(encoding="utf-8", newline="") as source:
             reader = csv.DictReader(source)
             if tuple(reader.fieldnames or ()) != columns:
-                raise ValueError(
-                    f"CSV header must be: {', '.join(columns)}"
-                )
+                raise ValueError(f"CSV header must be: {', '.join(columns)}")
             return tuple(dict(row) for row in reader)
     except FileNotFoundError:
         raise
@@ -158,6 +156,11 @@ def _metric_document(
     for name, value in metrics.items():
         if name in {"model", "predictions", "accuracy"}:
             raise ValueError(f"Final evaluation metrics must not contain {name!r}")
+        if name == SEARCH_FOLD_METRIC_KEY:
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("search_fold_metric must be a non-empty string")
+            document[name] = value.strip()
+            continue
         converted = float(value)
         if not math.isfinite(converted):
             raise ValueError(f"Final evaluation metric {name!r} must be finite")
@@ -180,7 +183,9 @@ def write_final_evaluation_tables(
         "timings": root / TIMINGS_FILENAME,
     }
     _atomic_text(paths["features"], _csv_text(tables.features, FEATURE_COLUMNS))
-    _atomic_text(paths["importances"], _csv_text(tables.importances, IMPORTANCE_COLUMNS))
+    _atomic_text(
+        paths["importances"], _csv_text(tables.importances, IMPORTANCE_COLUMNS)
+    )
     _atomic_text(
         paths["correlations"],
         _csv_text(tables.correlations, CORRELATION_COLUMNS),
@@ -206,9 +211,7 @@ def write_final_evaluation_tables(
         )
         + "\n",
     )
-    return {
-        name: path.relative_to(root).as_posix() for name, path in paths.items()
-    }
+    return {name: path.relative_to(root).as_posix() for name, path in paths.items()}
 
 
 def read_final_evaluation_tables(
@@ -230,9 +233,7 @@ def read_final_evaluation_tables(
             raise ValueError("Evaluation artifacts have an unexpected schema")
         for name, relative in expected.items():
             if artifacts[name] != relative:
-                raise ValueError(
-                    f"Evaluation artifact {name!r} must be {relative!r}"
-                )
+                raise ValueError(f"Evaluation artifact {name!r} must be {relative!r}")
 
     features = _read_csv(root / FEATURES_FILENAME, FEATURE_COLUMNS)
     importances = _read_csv(root / IMPORTANCES_FILENAME, IMPORTANCE_COLUMNS)
@@ -262,7 +263,11 @@ def read_final_evaluation_tables(
     )
 
 
-def build_final_evaluation_tables(diagnostics: object) -> FinalEvaluationTables:
+def build_final_evaluation_tables(
+    diagnostics: object,
+    *,
+    search_fold_metric: str | None = None,
+) -> FinalEvaluationTables:
     """Convert a diagnostics object into complete persisted table rows.
 
     The function intentionally consumes the small diagnostics protocol rather
@@ -342,13 +347,13 @@ def build_final_evaluation_tables(diagnostics: object) -> FinalEvaluationTables:
         }
         for feature_id, label, duration in zip(feature_ids, labels, durations)
     )
-    metrics = {
-        str(name): float(value) for name, value in diagnostics.metrics.items()
-    }
+    metrics = {str(name): float(value) for name, value in diagnostics.metrics.items()}
+    if search_fold_metric is not None:
+        if not isinstance(search_fold_metric, str) or not search_fold_metric.strip():
+            raise ValueError("search_fold_metric must be a non-empty string")
+        metrics[SEARCH_FOLD_METRIC_KEY] = search_fold_metric.strip()
     metrics["correlation_training_row_count"] = row_count
-    metrics["total_materialization_seconds"] = float(
-        sum(durations)
-    )
+    metrics["total_materialization_seconds"] = float(sum(durations))
     return FinalEvaluationTables(
         features=tuple(features),
         metrics=metrics,
@@ -386,6 +391,7 @@ __all__ = [
     "IMPORTANCE_COLUMNS",
     "IMPORTANCES_FILENAME",
     "METRICS_FILENAME",
+    "SEARCH_FOLD_METRIC_KEY",
     "TIMING_COLUMNS",
     "TIMINGS_FILENAME",
     "build_final_evaluation_tables",

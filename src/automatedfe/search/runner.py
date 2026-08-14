@@ -78,7 +78,9 @@ class RunnerDiagnosticsRecorder(SearchLifecycleRecorder):
     def __init__(self, path: str | PathLike[str], strategy: SearchStrategy) -> None:
         super().__init__(
             strategy=(
-                strategy.value if isinstance(strategy, SearchStrategy) else str(strategy)
+                strategy.value
+                if isinstance(strategy, SearchStrategy)
+                else str(strategy)
             ),
             candidate_csv_path=path,
         )
@@ -87,8 +89,7 @@ class RunnerDiagnosticsRecorder(SearchLifecycleRecorder):
         """Compatibility finalize: apply membership and rewrite the CSV."""
 
         self.on_search_completed(
-            canonical_expression_key(expression)
-            for expression in archive_expressions
+            canonical_expression_key(expression) for expression in archive_expressions
         )
         if self._candidate_csv_path is None:
             raise ValueError("no candidate CSV path configured")
@@ -133,8 +134,7 @@ def write_summary_json(
         )
     if resolved_path.exists() and not force:
         raise FileExistsError(
-            "Refusing to overwrite existing output without force=True: "
-            f"{resolved_path}"
+            f"Refusing to overwrite existing output without force=True: {resolved_path}"
         )
     return _atomic_write_json(resolved_path, summary)
 
@@ -293,8 +293,7 @@ def _validate_budget_contract(
     if evaluated:
         if time_budget_seconds is None:
             raise ValueError(
-                f"strategy {strategy.value!r} requires a positive "
-                "time_budget_seconds"
+                f"strategy {strategy.value!r} requires a positive time_budget_seconds"
             )
         if candidate_count is not None:
             raise ValueError(
@@ -336,7 +335,9 @@ def _preflight_output_paths(
         raise ValueError(
             "archive_path is not supported for enumerative_without_archive"
         )
-    if not use_active_set and (history_path is not None or active_archive_path is not None):
+    if not use_active_set and (
+        history_path is not None or active_archive_path is not None
+    ):
         raise ValueError(
             "history_path and active_archive_path require use_active_set=True"
         )
@@ -349,9 +350,7 @@ def _preflight_output_paths(
         Path(history_path).resolve() if history_path is not None else None
     )
     resolved_active_archive = (
-        Path(active_archive_path).resolve()
-        if active_archive_path is not None
-        else None
+        Path(active_archive_path).resolve() if active_archive_path is not None else None
     )
     outputs = [
         path
@@ -370,7 +369,9 @@ def _preflight_output_paths(
         )
     for path in outputs:
         if path.exists() and path.is_dir():
-            raise ValueError(f"Output path must identify a file, not a directory: {path}")
+            raise ValueError(
+                f"Output path must identify a file, not a directory: {path}"
+            )
         if path.exists() and not force:
             raise FileExistsError(
                 f"Refusing to overwrite existing output without force=True: {path}"
@@ -714,8 +715,7 @@ def _run_feature_search_impl(
         manager = getattr(search, "active_set_manager", None)
         if manager is None:
             raise TypeError(
-                "history_path and active_archive_path require an active-set "
-                "manager"
+                "history_path and active_archive_path require an active-set manager"
             )
         if resolved_history_path is not None:
             manager.save_history(resolved_history_path, mapping=mapping)
@@ -741,7 +741,14 @@ def _run_feature_search_impl(
         and isinstance(final_evaluation, FinalEvaluationResult)
         and final_evaluation.diagnostics is not None
     ):
-        _bundle_writer.write_evaluation(final_evaluation)
+        _bundle_writer.write_evaluation(
+            final_evaluation,
+            search_fold_metric=(
+                "brier_improvement"
+                if score_metric in {"brier", "brier_improvement"}
+                else score_metric
+            ),
+        )
 
     active_set_final_evaluation: FinalEvaluationResult | None = None
     active_set_final_evaluation_duration_seconds: float | None = None
@@ -755,7 +762,9 @@ def _run_feature_search_impl(
                 include_diagnostics=False,
             )
         else:
-            active_set_final_evaluation = final_evaluator.evaluate(active_set_expressions)
+            active_set_final_evaluation = final_evaluator.evaluate(
+                active_set_expressions
+            )
         active_set_final_evaluation_duration_seconds = (
             monotonic_ns() - active_started_ns
         ) * 1e-9
@@ -977,11 +986,15 @@ def run_feature_search(
             lifecycle.close()
         try:
             partial = writer.finalize(
-                "interrupted" if isinstance(error, KeyboardInterrupt) else "search_failed",
+                "interrupted"
+                if isinstance(error, KeyboardInterrupt)
+                else "search_failed",
                 lifecycle=lifecycle,
                 error=error,
             )
-            _copy_bundle_candidates(partial.path, Path(csv_path).resolve() if csv_path else None)
+            _copy_bundle_candidates(
+                partial.path, Path(csv_path).resolve() if csv_path else None
+            )
         except BaseException:
             # Preserve the original search exception. The writer has already
             # made a best-effort cleanup if partial publication failed.
@@ -992,7 +1005,9 @@ def run_feature_search(
     if lifecycle is not None:
         lifecycle.close()
     completed = writer.finalize("search_complete", lifecycle=lifecycle)
-    _copy_bundle_candidates(completed.path, Path(csv_path).resolve() if csv_path else None)
+    _copy_bundle_candidates(
+        completed.path, Path(csv_path).resolve() if csv_path else None
+    )
     return replace(result, bundle_path=completed.path)
 
 
